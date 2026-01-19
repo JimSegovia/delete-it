@@ -129,6 +129,7 @@ export const SwipeDeck = React.forwardRef<SwipeDeckRef, SwipeDeckProps>(
 
         const cards = useMemo(() => {
             // Render active cards
+            // Only render up to 3 cards for performance, reversed so first index is on top
             const activeCards = assets.slice(currentIndex, currentIndex + 3).reverse().map((asset, index, array) => {
                 const isTop = index === array.length - 1;
                 return (

@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
-import React, { useCallback, useEffect, useImperativeHandle, useState } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { Dimensions, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -9,7 +9,7 @@ import Animated, {
     runOnJS,
     useAnimatedStyle,
     useSharedValue,
-    withSpring,
+    withSpring
 } from 'react-native-reanimated';
 import { PhotoAsset } from '../../hooks/usePhotos';
 
@@ -56,21 +56,54 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
         const [fileInfo, setFileInfo] = useState<{ size: string; date: string } | null>(null);
 
         useEffect(() => {
+            // OPTIMIZATION: Don't fetch info for ghost cards (they are just animating out)
+            if (autoSwipe) return;
+
             let isMounted = true;
             const fetchInfo = async () => {
+                if (!asset || !asset.id) return;
                 try {
-                    const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+                    let sizeBytes = asset.fileSize || 0;
+                    let date = new Date(asset.creationTime || asset.modificationTime || Date.now());
+
+                    // 1. Try MediaLibrary first (Best for Gallery Assets)
+                    // If we don't have size, try getting full asset info. 
+                    // We try this even for URIs in case MediaLibrary can handle them, or if the ID is actually a MediaLib ID.
+                    if (sizeBytes === 0) {
+                        const info = await MediaLibrary.getAssetInfoAsync(asset.id).catch(() => null);
+                        if (isMounted && info) {
+                            // @ts-ignore
+                            sizeBytes = info.fileSize || 0;
+                            date = new Date(info.creationTime || asset.creationTime || Date.now());
+                        }
+                    }
+
+                    // 2. Fallback to FileSystem for URIs if size is still 0
+                    if (sizeBytes === 0 && asset.uri) {
+                        const fsInfo = await FileSystem.getInfoAsync(asset.uri).catch(() => null);
+                        if (isMounted && fsInfo?.exists) {
+                            sizeBytes = fsInfo.size || 0;
+                            // FileSystem.getInfoAsync doesn't provide creationTime, so we keep the existing date
+                        }
+                    }
+
+                    // 3. Final fallback to MediaLibrary for URI if size is still 0 (e.g., if FileSystem failed or asset.id was not a MediaLibrary ID)
+                    // This handles cases where asset.id might be a URI, but the initial MediaLibrary.getAssetInfoAsync(asset.id) failed.
+                    if (sizeBytes === 0 && asset.uri && asset.id !== asset.uri) {
+                        const info = await MediaLibrary.getAssetInfoAsync(asset.uri).catch(() => null);
+                        if (isMounted && info) {
+                            // @ts-ignore
+                            sizeBytes = info.fileSize || 0;
+                        }
+                    }
+
                     if (!isMounted) return;
 
-                    const date = new Date(asset.creationTime);
+                    const sizeMB = (sizeBytes / (1024 * 1024)).toFixed(1);
                     const dateStr = date.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-                    // @ts-ignore - access fileSize which might not be in the type definition depending on version
-                    const sizeBytes = info.fileSize || 0;
-                    const sizeMB = (sizeBytes / (1024 * 1024)).toFixed(1);
-
                     setFileInfo({
-                        size: `${sizeMB} MB`,
+                        size: sizeBytes > 0 ? `${sizeMB} MB` : '',
                         date: dateStr
                     });
                 } catch (e) {
@@ -79,45 +112,40 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
             };
             fetchInfo();
             return () => { isMounted = false; };
-        }, [asset.id, asset.creationTime]);
+        }, [asset, autoSwipe]); // Added asset dependency, kept autoSwipe
 
         React.useEffect(() => {
             if (startFromLeft) {
                 isRestoring.value = true;
                 translateY.value = 0; // Hard reset Y to 0 immediately to prevent misalignment
+                translateX.value = 0; // Reset X to 0 from whatever it was
+                // We want to animate FROM left (-Width) to 0
+                // So momentarily set to left then spring to 0?
+                // Actually initial state hook handled the initial value.
+                // We just need to animate to 0.
+                translateX.value = -SCREEN_WIDTH * 1.5; // Force start pos
                 translateX.value = withSpring(0, {}, (finished) => {
                     if (finished) {
                         isRestoring.value = false;
                     }
                 });
             } else if (autoSwipe === 'left') {
-                translateX.value = withSpring(-SCREEN_WIDTH * 1.5, { velocity: initialVelocity });
+                translateX.value = withSpring(-SCREEN_WIDTH * 1.5, { velocity: initialVelocity }, (finished) => {
+                    if (finished) {
+                        runOnJS(onSwipeLeft)(asset);
+                    }
+                });
             } else if (autoSwipe === 'right') {
-                translateX.value = withSpring(SCREEN_WIDTH * 1.5, { velocity: initialVelocity });
+                translateX.value = withSpring(SCREEN_WIDTH * 1.5, { velocity: initialVelocity }, (finished) => {
+                    if (finished) {
+                        runOnJS(onSwipeRight)(asset);
+                    }
+                });
             }
-        }, [startFromLeft, translateX, translateY, isRestoring, autoSwipe, initialVelocity]);
+        }, [startFromLeft, translateX, translateY, isRestoring, autoSwipe, initialVelocity, onSwipeLeft, onSwipeRight, asset]);
 
         const swipeLeft = useCallback((velocity?: number, translation?: number) => {
             'worklet';
-            // If called manually (button), we animate.
-            // If called from gesture end, we might just want to notify parent.
-            // BUT: Parent now handles "logical removal".
-            // So this function is mainly used by:
-            // 1. Gesture onEnd -> notify parent -> parent spawns ghost.
-            // 2. Button -> notify parent -> parent spawns ghost.
-
-            // Actually, for button press, parent calls ref.swipeLeft().
-            // Ideally ref.swipeLeft() just tells parent "I'm done".
-
-            // Wait, ref.swipeLeft is called by parent's useImperativeHandle.
-            // But now parent handles logic FIRST.
-            // So parent basically doesn't need to call ref.swipeLeft anymore for *active* card?
-            // Correct. Parent will just REMOVE active card.
-            // AND SPAWN GHOST.
-            // The GHOST will have autoSwipe='left'.
-            // So we don't need to do anything here except maybe expose current stats?
-
-            // However, gesture needs to call it.
             runOnJS(onSwipeLeft)(asset, velocity, translation);
         }, [onSwipeLeft, asset]);
 
@@ -134,7 +162,7 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
         // --- GESTURES ---
 
         // 1. Swipe Gesture (Normal Mode)
-        const swipeGesture = Gesture.Pan()
+        const swipeGesture = useMemo(() => Gesture.Pan()
             .enabled(isTop && !isZoomMode)
             .maxPointers(1) // Avoid conflict with pinch
             .onUpdate((event) => {
@@ -152,10 +180,10 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
                     translateX.value = withSpring(0);
                     translateY.value = withSpring(0);
                 }
-            });
+            }), [isTop, isZoomMode, translateX, translateY, swipeLeft, swipeRight]);
 
         // 2. Zoom Pan Gesture (Zoom Mode)
-        const zoomPanGesture = Gesture.Pan()
+        const zoomPanGesture = useMemo(() => Gesture.Pan()
             .enabled(isTop && isZoomMode)
             .averageTouches(true)
             .onUpdate((event) => {
@@ -165,10 +193,10 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
             .onEnd(() => {
                 savedZoomTx.value = zoomTranslateX.value;
                 savedZoomTy.value = zoomTranslateY.value;
-            });
+            }), [isTop, isZoomMode, zoomTranslateX, zoomTranslateY, savedZoomTx, savedZoomTy]);
 
         // 3. Pinch Gesture (Both Modes)
-        const pinchGesture = Gesture.Pinch()
+        const pinchGesture = useMemo(() => Gesture.Pinch()
             .enabled(isTop)
             .onUpdate((event) => {
                 scale.value = savedScale.value * event.scale;
@@ -187,7 +215,7 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
                     // Normal mode: Revert on release
                     scale.value = withSpring(1);
                 }
-            });
+            }), [isTop, isZoomMode, scale, savedScale, focalX, focalY]);
 
         // Reset zoom when mode changes
         React.useEffect(() => {
@@ -202,10 +230,10 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
         }, [isZoomMode, scale, zoomTranslateX, zoomTranslateY, savedScale, savedZoomTx, savedZoomTy]);
 
         // Combine gestures
-        const composedGesture = Gesture.Simultaneous(
+        const composedGesture = useMemo(() => Gesture.Simultaneous(
             pinchGesture,
             Gesture.Race(zoomPanGesture, swipeGesture)
-        );
+        ), [pinchGesture, zoomPanGesture, swipeGesture]);
 
         // --- STYLES ---
 
@@ -340,5 +368,8 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 14,
         fontWeight: '500',
+        textShadowColor: 'rgba(0, 0, 0, 0.75)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 3,
     },
 });

@@ -1,35 +1,257 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import * as FileSystem from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
 import { StatusBar } from 'expo-status-bar';
 import React, { useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SwipeDeck, SwipeDeckRef } from '../components/SwipeDeck/Deck';
 import { PhotoAsset, usePhotos } from '../hooks/usePhotos';
 
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import CompletionView from '../components/SwipeDeck/CompletionView';
+// ... imports
+
 export default function SwipeScreen() {
     const router = useRouter();
-    const { photos, loading, error } = usePhotos();
+    const params = useLocalSearchParams();
+
+    // Parse params
+    const { sourceType, sourceId, selectionMode, startAssetId, endAssetId, title } = params;
+
+    const { photos, loading, error, loadMore, hasNextPage } = usePhotos({
+        sourceType: sourceType as 'album' | 'folder',
+        sourceId: sourceId as string,
+        selectionMode: selectionMode as 'default' | 'manual' | 'resume',
+        startAssetId: startAssetId as string,
+        endAssetId: endAssetId as string
+    });
+
     const deckRef = useRef<SwipeDeckRef>(null);
     const [isZoomMode, setIsZoomMode] = useState(false);
     const [currentIndex, setCurrentIndex] = useState(0);
+    const [isFinished, setIsFinished] = useState(false);
 
-    const handleSwipeLeft = (asset: PhotoAsset) => {
-        console.log('Delete photo:', asset.id);
-        setCurrentIndex(prev => prev + 1);
+    const [actionHistory, setActionHistory] = useState<('keep' | 'delete')[]>([]);
+
+    // Batch Deletion State
+    const [itemsToDelete, setItemsToDelete] = useState<PhotoAsset[]>([]);
+    const [runDeletionImmediately, setRunDeletionImmediately] = useState(true);
+
+    // Load Settings and optionally Restore Session Data
+    React.useEffect(() => {
+        const loadSettings = async () => {
+            try {
+                // 1. Load Preference
+                const immediateMode = await AsyncStorage.getItem('deleteit_immediateDeletion');
+                if (immediateMode !== null) {
+                    setRunDeletionImmediately(immediateMode === 'true');
+                }
+
+                // 2. Load Pending Deletions if Resuming
+                if (selectionMode === 'resume') {
+                    const sessionJson = await AsyncStorage.getItem('deleteit_session');
+                    if (sessionJson) {
+                        const session = JSON.parse(sessionJson);
+                        if (session.itemsToDelete && Array.isArray(session.itemsToDelete)) {
+                            console.log("Restoring pending deletions:", session.itemsToDelete.length);
+                            setItemsToDelete(session.itemsToDelete);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("Error loading settings/session", e);
+            }
+        };
+        loadSettings();
+    }, [selectionMode]);
+
+    // Helper: Immediate Deletion
+    const deleteAsset = async (asset: PhotoAsset): Promise<boolean> => {
+        try {
+            if (sourceType === 'album') {
+                return await MediaLibrary.deleteAssetsAsync([asset.id]);
+            } else {
+                return new Promise((resolve) => {
+                    Alert.alert(
+                        "Borrar archivo",
+                        "¿Estás seguro de eliminar este archivo permanentemente?",
+                        [
+                            { text: "Cancelar", onPress: () => resolve(false), style: "cancel" },
+                            {
+                                text: "Eliminar", onPress: async () => {
+                                    try {
+                                        await FileSystem.deleteAsync(asset.uri, { idempotent: true });
+                                        resolve(true);
+                                    } catch (err) {
+                                        console.error("FS Delete error", err);
+                                        resolve(false);
+                                    }
+                                }, style: "destructive"
+                            }
+                        ]
+                    );
+                });
+            }
+        } catch (e) {
+            console.error("Deletion error", e);
+            return false;
+        }
+    };
+
+    const handleSwipeLeft = async (asset: PhotoAsset) => {
+        // ... (keep existing logging)
+        const nextIndex = currentIndex + 1;
+        setCurrentIndex(nextIndex);
+
+        let newItemsToDelete = itemsToDelete;
+
+        if (runDeletionImmediately) {
+            // Immediate Delete
+            const success = await deleteAsset(asset);
+            if (success) {
+                setActionHistory(prev => [...prev, 'delete']);
+            } else {
+                deckRef.current?.undo();
+                setCurrentIndex(prev => Math.max(0, prev - 1));
+            }
+        } else {
+            // Batch Mode: Add to list
+            newItemsToDelete = [...itemsToDelete, asset];
+            setItemsToDelete(newItemsToDelete);
+            setActionHistory(prev => [...prev, 'delete']);
+        }
+
+        saveProgress(asset.id, newItemsToDelete);
+
+        if (hasNextPage && photos.length - nextIndex < 5) {
+            loadMore();
+        }
     };
 
     const handleSwipeRight = (asset: PhotoAsset) => {
-        console.log('Keep photo:', asset.id);
-        setCurrentIndex(prev => prev + 1);
+        const nextIndex = currentIndex + 1;
+        setCurrentIndex(nextIndex);
+        saveProgress(asset.id, itemsToDelete);
+
+        setActionHistory(prev => [...prev, 'keep']);
+
+        if (hasNextPage && photos.length - nextIndex < 5) {
+            loadMore();
+        }
     };
 
     const handleUndo = () => {
+        if (actionHistory.length === 0) return;
+
+        const lastAction = actionHistory[actionHistory.length - 1];
+
+        if (lastAction === 'delete') {
+            if (runDeletionImmediately) {
+                console.log("Cannot undo immediate deletion");
+                return;
+            } else {
+                // Remove from pending list
+                setItemsToDelete(prev => prev.slice(0, -1));
+            }
+        }
+
         deckRef.current?.undo();
-        setCurrentIndex(prev => Math.max(0, prev - 1));
+        const prevIndex = Math.max(0, currentIndex - 1);
+        setCurrentIndex(prevIndex);
+
+        setActionHistory(prev => prev.slice(0, -1));
     };
 
-    if (loading) {
+    // Process Pending Deletions
+    const processDeletions = async () => {
+        if (itemsToDelete.length === 0) return;
+
+        return new Promise<void>((resolve) => {
+            Alert.alert(
+                "Finalizar limpieza",
+                `¿Deseas eliminar ${itemsToDelete.length} fotos seleccionadas?`,
+                [
+                    {
+                        text: "Cancelar",
+                        style: "cancel",
+                        onPress: () => {
+                            // If cancelled, what happens? They stay in list?
+                            // For safety, we keep them? Or do we assume user wants to keep them?
+                            // Usually "Cancel" on exit means "Don't exit" or "Don't Delete yet".
+                            // Let's assume we just resolve (do nothing).
+                            resolve();
+                        }
+                    },
+                    {
+                        text: "Eliminar",
+                        style: "destructive",
+                        onPress: async () => {
+                            // Process
+                            try {
+                                // We reuse deleteAsset but need to handle bulk efficiently if possible, 
+                                // but deleteAsset has logic for Album vs File.
+                                // MediaLibrary takes array of IDs! Efficient for Album.
+                                if (sourceType === 'album') {
+                                    const ids = itemsToDelete.map(a => a.id);
+                                    await MediaLibrary.deleteAssetsAsync(ids);
+                                } else {
+                                    // Folder - map deleteAsset (concurrent)
+                                    // We'll trust deleteAsset prompts? No. deleteAsset prompts! 
+                                    // We need a silent delete version for batch.
+                                    // Let's just do direct FS delete here to avoid N alerts.
+                                    await Promise.all(itemsToDelete.map(async (asset) => {
+                                        try {
+                                            await FileSystem.deleteAsync(asset.uri, { idempotent: true });
+                                        } catch (e) {
+                                            console.error("Batch delete error", asset.uri, e);
+                                        }
+                                    }));
+                                }
+                                setItemsToDelete([]); // Clear
+                                resolve();
+                            } catch (error) {
+                                console.error("Error in batch delete", error);
+                                Alert.alert("Error", "Ocurrió un error al eliminar algunas fotos.");
+                                resolve();
+                            }
+                        }
+                    }
+                ]
+            );
+        });
+    };
+
+    // Wrapper for navigation back to ensure processing
+    const handleExit = async () => {
+        if (!runDeletionImmediately && itemsToDelete.length > 0) {
+            await processDeletions();
+        }
+        router.back();
+    };
+
+    const saveProgress = async (lastSwipedId: string, currentItemsVal: PhotoAsset[]) => {
+        // ... (keep existing implementation)
+        try {
+            const sessionData = {
+                sourceType,
+                sourceId,
+                startAssetId: lastSwipedId,
+                timestamp: Date.now(),
+                title: title || 'Cámara',
+                totalCount: photos.length,
+                itemsToDelete: currentItemsVal // Use passed value
+            };
+            await AsyncStorage.setItem('deleteit_session', JSON.stringify(sessionData));
+        } catch (e) {
+            console.error("Error saving session", e);
+        }
+    };
+
+    // Only show full screen loading if we have NO photos yet
+    if (loading && photos.length === 0) {
         return (
             <View style={[styles.centered, styles.darkBg]}>
                 <ActivityIndicator size="large" color="#ef4444" />
@@ -38,7 +260,8 @@ export default function SwipeScreen() {
         );
     }
 
-    if (error) {
+    // Show error only if we have no photos to show
+    if (error && photos.length === 0) {
         return (
             <View style={[styles.content, styles.darkBg]} pointerEvents="box-none">
                 <Ionicons name="alert-circle-outline" size={64} color="#ef4444" />
@@ -54,12 +277,15 @@ export default function SwipeScreen() {
             <StatusBar style="light" />
 
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+                <TouchableOpacity onPress={handleExit} style={styles.backButton}>
                     <Ionicons name="chevron-back" size={28} color="#fff" />
                 </TouchableOpacity>
                 <View style={styles.headerTitleContainer}>
-                    <Text style={styles.title}>Limpiando: Cámara</Text>
-                    <Text style={styles.subtitle}>{Math.min(currentIndex + 1, photos.length)} de {photos.length} fotos</Text>
+                    <Text style={styles.title}>Limpiando: {title || 'Cámara'}</Text>
+                    <Text style={styles.subtitle}>
+                        {Math.min(currentIndex + 1, photos.length)} de {photos.length} fotos
+                        {loading && photos.length > 0 ? ' (Cargando...)' : ''}
+                    </Text>
                 </View>
                 <View style={{ width: 28 }} />
             </View>
@@ -79,7 +305,7 @@ export default function SwipeScreen() {
                         assets={photos}
                         onSwipeLeft={handleSwipeLeft}
                         onSwipeRight={handleSwipeRight}
-                        onEmpty={() => console.log('No more photos!')}
+                        onEmpty={() => setIsFinished(true)}
                         isZoomMode={isZoomMode}
                     />
                 ) : (
@@ -129,6 +355,20 @@ export default function SwipeScreen() {
                     <Ionicons name="search" size={24} color={isZoomMode ? "#a855f7" : "#fff"} />
                 </TouchableOpacity>
             </View>
+
+            {isFinished && (
+                <CompletionView onFinish={async () => {
+                    if (!runDeletionImmediately && itemsToDelete.length > 0) {
+                        await processDeletions();
+                    }
+                    try {
+                        await AsyncStorage.removeItem('deleteit_session');
+                    } catch (e) {
+                        console.error("Error clearing session", e);
+                    }
+                    router.navigate('/');
+                }} />
+            )}
         </SafeAreaView>
     );
 }
