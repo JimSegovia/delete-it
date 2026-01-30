@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 
@@ -26,7 +27,11 @@ export default function SettingsScreen() {
                 const immediateMode = await AsyncStorage.getItem('deleteit_immediateDeletion');
                 if (immediateMode !== null) setImmediateDeletion(immediateMode === 'true');
 
-                // Load others if needed in future
+                const vibrationMode = await AsyncStorage.getItem('deleteit_vibration');
+                if (vibrationMode !== null) setVibration(vibrationMode === 'true');
+
+                const soundMode = await AsyncStorage.getItem('deleteit_sound');
+                if (soundMode !== null) setSounds(soundMode === 'true');
             } catch (e) {
                 console.error("Failed to load settings", e);
             }
@@ -53,6 +58,8 @@ export default function SettingsScreen() {
     };
 
 
+
+    const router = useRouter(); // Hook
 
     return (
         <View style={styles.container}>
@@ -81,7 +88,7 @@ export default function SettingsScreen() {
                                     <Text style={styles.rowTitle}>{item.label}</Text>
                                 </View>
                                 {theme === item.value && (
-                                    <Ionicons name="checkmark" size={20} color="#0ea5e9" />
+                                    <Ionicons name="checkmark" size={20} color="#c026d3" />
                                 )}
                             </TouchableOpacity>
                             {index < arr.length - 1 && <View style={styles.separator} />}
@@ -109,7 +116,7 @@ export default function SettingsScreen() {
                                     <Text style={styles.rowTitle}>{item.label}</Text>
                                 </View>
                                 {language === item.value && (
-                                    <Ionicons name="checkmark" size={20} color="#0ea5e9" />
+                                    <Ionicons name="checkmark" size={20} color="#c026d3" />
                                 )}
                             </TouchableOpacity>
                             {index < arr.length - 1 && <View style={styles.separator} />}
@@ -134,7 +141,7 @@ export default function SettingsScreen() {
                             </Text>
                         </View>
                         <Switch
-                            trackColor={{ false: '#3f3f46', true: '#0ea5e9' }}
+                            trackColor={{ false: '#3f3f46', true: '#c026d3' }}
                             thumbColor={'#fff'}
                             onValueChange={toggleImmediateDeletion}
                             value={immediateDeletion}
@@ -156,7 +163,7 @@ export default function SettingsScreen() {
                             </Text>
                         </View>
                         <Switch
-                            trackColor={{ false: '#3f3f46', true: '#0ea5e9' }} // Sky blue for ON
+                            trackColor={{ false: '#3f3f46', true: '#c026d3' }} // Lila for ON
                             thumbColor={'#fff'}
                             onValueChange={toggleMoveToTrash}
                             value={moveToTrash}
@@ -173,7 +180,7 @@ export default function SettingsScreen() {
                             <Text style={styles.rowTitle}>Ocultar Favoritos</Text>
                         </View>
                         <Switch
-                            trackColor={{ false: '#3f3f46', true: '#0ea5e9' }}
+                            trackColor={{ false: '#3f3f46', true: '#c026d3' }}
                             thumbColor={'#fff'}
                             onValueChange={toggleHideFavorites}
                             value={hideFavorites}
@@ -193,9 +200,12 @@ export default function SettingsScreen() {
                             <Text style={styles.rowTitle}>Vibración</Text>
                         </View>
                         <Switch
-                            trackColor={{ false: '#3f3f46', true: '#0ea5e9' }}
+                            trackColor={{ false: '#3f3f46', true: '#c026d3' }}
                             thumbColor={'#fff'}
-                            onValueChange={setVibration}
+                            onValueChange={async (val) => {
+                                setVibration(val);
+                                await AsyncStorage.setItem('deleteit_vibration', String(val));
+                            }}
                             value={vibration}
                         />
                     </View>
@@ -210,9 +220,12 @@ export default function SettingsScreen() {
                             <Text style={styles.rowTitle}>Sonidos</Text>
                         </View>
                         <Switch
-                            trackColor={{ false: '#3f3f46', true: '#0ea5e9' }}
+                            trackColor={{ false: '#3f3f46', true: '#c026d3' }}
                             thumbColor={'#fff'}
-                            onValueChange={setSounds}
+                            onValueChange={async (val) => {
+                                setSounds(val);
+                                await AsyncStorage.setItem('deleteit_sound', String(val));
+                            }}
                             value={sounds}
                         />
                     </View>
@@ -222,7 +235,14 @@ export default function SettingsScreen() {
                 <Text style={styles.sectionHeader}>OTROS</Text>
                 <View style={styles.sectionContainer}>
 
-                    <TouchableOpacity style={styles.row} activeOpacity={0.7}>
+                    <TouchableOpacity
+                        style={styles.row}
+                        activeOpacity={0.7}
+                        onPress={async () => {
+                            await AsyncStorage.setItem('tutorial_completed', 'false');
+                            router.replace({ pathname: '/', params: { showTutorial: 'true' } });
+                        }}
+                    >
                         <View style={styles.iconContainer}>
                             <Ionicons name="play-circle-outline" size={22} color="#9ca3af" />
                         </View>

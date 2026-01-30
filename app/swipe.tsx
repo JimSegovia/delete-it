@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics';
 
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
@@ -12,6 +13,8 @@ import { PhotoAsset, usePhotos } from '../hooks/usePhotos';
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import CompletionView from '../components/SwipeDeck/CompletionView';
+import { useFeedback } from '../hooks/useFeedback';
+import { useStats } from '../hooks/useStats';
 // ... imports
 
 export default function SwipeScreen() {
@@ -20,6 +23,9 @@ export default function SwipeScreen() {
 
     // Parse params
     const { sourceType, sourceId, selectionMode, startAssetId, endAssetId, title } = params;
+
+    const { logDeletion } = useStats();
+    const { triggerHaptic } = useFeedback(); // Removed triggerSelectionHaptic as unused
 
     const { photos, loading, error, loadMore, hasNextPage } = usePhotos({
         sourceType: sourceType as 'album' | 'folder',
@@ -110,9 +116,49 @@ export default function SwipeScreen() {
 
         if (runDeletionImmediately) {
             // Immediate Delete
+
+            // Get size before delete if possible (for logs)
+            // Note: photos[currentIndex] might be stale if we shift, but 'asset' is passed in.
+            // If asset.fileSize is missing, try to get it?
+            let size = asset.fileSize || 0;
+
+            // Logic copied from Card.tsx for reliable size check
+            if (size === 0) {
+                // 1. Try MediaLibrary first (Best for Gallery Assets)
+                if (sourceType === 'album' || !asset.uri.startsWith('file://')) {
+                    try {
+                        const info = await MediaLibrary.getAssetInfoAsync(asset.id).catch(() => null);
+                        if (info) {
+                            // On Android, MediaLibrary.AssetInfo might not have a direct 'fileSize' property.
+                            // We use FileSystem.getInfoAsync on localUri (or uri) to get accurate size.
+                            const fileUri = info.localUri || info.uri;
+                            if (fileUri) {
+                                const fsInfo = await FileSystem.getInfoAsync(fileUri).catch(() => null);
+                                if (fsInfo?.exists) {
+                                    size = fsInfo.size || 0;
+                                }
+                            }
+                        }
+                    } catch (e) { console.log("Album size check error", e); }
+                }
+
+                // 2. Fallback to FileSystem for direct URI if size is still 0
+                // (or if MediaLibrary failed but we have a URI in asset)
+                if (size === 0 && asset.uri) {
+                    try {
+                        const fsInfo = await FileSystem.getInfoAsync(asset.uri).catch(() => null);
+                        if (fsInfo?.exists) {
+                            size = fsInfo.size || 0;
+                        }
+                    } catch (e) { console.log("Size check error", e); }
+                }
+            }
+
+            console.log(`[SwipeLeft] Deleting asset ${asset.id}, Resolved Size: ${size}`);
             const success = await deleteAsset(asset);
             if (success) {
                 setActionHistory(prev => [...prev, 'delete']);
+                logDeletion(asset.id, size, asset.mediaType === 'video' ? 'video' : 'photo');
             } else {
                 deckRef.current?.undo();
                 setCurrentIndex(prev => Math.max(0, prev - 1));
@@ -132,6 +178,9 @@ export default function SwipeScreen() {
     };
 
     const handleSwipeRight = (asset: PhotoAsset) => {
+        // Haptic Feedback for Keep (Light)
+        triggerHaptic(Haptics.ImpactFeedbackStyle.Light);
+
         const nextIndex = currentIndex + 1;
         setCurrentIndex(nextIndex);
         saveProgress(asset.id, itemsToDelete);
@@ -191,20 +240,51 @@ export default function SwipeScreen() {
                         onPress: async () => {
                             // Process
                             try {
-                                // We reuse deleteAsset but need to handle bulk efficiently if possible, 
-                                // but deleteAsset has logic for Album vs File.
-                                // MediaLibrary takes array of IDs! Efficient for Album.
                                 if (sourceType === 'album') {
+                                    // 1. Log Sizes First (Fetch info if needed)
+                                    await Promise.all(itemsToDelete.map(async (asset) => {
+                                        let size = asset.fileSize || 0;
+                                        // Robust Size Check (Same as Card.tsx)
+                                        if (size === 0) {
+                                            try {
+                                                const info = await MediaLibrary.getAssetInfoAsync(asset.id).catch(() => null);
+                                                if (info) {
+                                                    const fileUri = info.localUri || info.uri;
+                                                    if (fileUri) {
+                                                        const fsInfo = await FileSystem.getInfoAsync(fileUri).catch(() => null);
+                                                        if (fsInfo?.exists) {
+                                                            size = fsInfo.size || 0;
+                                                        }
+                                                    }
+                                                }
+                                            } catch (e) { console.log("Batch album size check error", e); }
+
+                                            if (size === 0 && asset.uri) {
+                                                try {
+                                                    const fsInfo = await FileSystem.getInfoAsync(asset.uri).catch(() => null);
+                                                    if (fsInfo?.exists) size = fsInfo.size || 0;
+                                                } catch (e) { console.log("Batch size check error", e); }
+                                            }
+                                        }
+                                        logDeletion(asset.id, size, asset.mediaType === 'video' ? 'video' : 'photo');
+                                    }));
+
+                                    // 2. Delete Assets
                                     const ids = itemsToDelete.map(a => a.id);
                                     await MediaLibrary.deleteAssetsAsync(ids);
                                 } else {
                                     // Folder - map deleteAsset (concurrent)
-                                    // We'll trust deleteAsset prompts? No. deleteAsset prompts! 
-                                    // We need a silent delete version for batch.
-                                    // Let's just do direct FS delete here to avoid N alerts.
                                     await Promise.all(itemsToDelete.map(async (asset) => {
                                         try {
+                                            // Log size first
+                                            let size = asset.fileSize || 0;
+                                            if (!size) {
+                                                const info = await FileSystem.getInfoAsync(asset.uri);
+                                                if (info.exists) size = info.size || 0;
+                                            }
+
                                             await FileSystem.deleteAsync(asset.uri, { idempotent: true });
+                                            logDeletion(asset.id, size, asset.mediaType === 'video' ? 'video' : 'photo');
                                         } catch (e) {
                                             console.error("Batch delete error", asset.uri, e);
                                         }

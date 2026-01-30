@@ -1,3 +1,4 @@
+import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
@@ -68,32 +69,28 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
 
                     // 1. Try MediaLibrary first (Best for Gallery Assets)
                     // If we don't have size, try getting full asset info. 
-                    // We try this even for URIs in case MediaLibrary can handle them, or if the ID is actually a MediaLib ID.
                     if (sizeBytes === 0) {
                         const info = await MediaLibrary.getAssetInfoAsync(asset.id).catch(() => null);
                         if (isMounted && info) {
-                            // @ts-ignore
-                            sizeBytes = info.fileSize || 0;
+                            // On Android, MediaLibrary.AssetInfo might not have a direct 'fileSize' property.
+                            // We use FileSystem.getInfoAsync on localUri (or uri) to get accurate size.
+                            const fileUri = info.localUri || info.uri;
+                            if (fileUri) {
+                                const fsInfo = await FileSystem.getInfoAsync(fileUri).catch(() => null);
+                                if (isMounted && fsInfo?.exists) {
+                                    sizeBytes = fsInfo.size || 0;
+                                }
+                            }
+                            // Even if FS fails, we might have creationTime
                             date = new Date(info.creationTime || asset.creationTime || Date.now());
                         }
                     }
 
-                    // 2. Fallback to FileSystem for URIs if size is still 0
+                    // 2. Fallback to FileSystem for direct URI if size is still 0
                     if (sizeBytes === 0 && asset.uri) {
                         const fsInfo = await FileSystem.getInfoAsync(asset.uri).catch(() => null);
                         if (isMounted && fsInfo?.exists) {
                             sizeBytes = fsInfo.size || 0;
-                            // FileSystem.getInfoAsync doesn't provide creationTime, so we keep the existing date
-                        }
-                    }
-
-                    // 3. Final fallback to MediaLibrary for URI if size is still 0 (e.g., if FileSystem failed or asset.id was not a MediaLibrary ID)
-                    // This handles cases where asset.id might be a URI, but the initial MediaLibrary.getAssetInfoAsync(asset.id) failed.
-                    if (sizeBytes === 0 && asset.uri && asset.id !== asset.uri) {
-                        const info = await MediaLibrary.getAssetInfoAsync(asset.uri).catch(() => null);
-                        if (isMounted && info) {
-                            // @ts-ignore
-                            sizeBytes = info.fileSize || 0;
                         }
                     }
 

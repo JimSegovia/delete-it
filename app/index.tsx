@@ -3,13 +3,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BlurView } from 'expo-blur';
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useState } from 'react';
 import { BackHandler, FlatList, Image, Pressable, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, interpolate, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import MediaSelectModal from '../components/MediaSelectModal';
 import SettingsScreen from '../components/SettingsScreen';
+import { TutorialOverlay, TutorialStep } from '../components/Tutorial/TutorialOverlay';
+import { useFeedback } from '../hooks/useFeedback';
+import { useStats } from '../hooks/useStats';
 
 const { StorageAccessFramework } = FileSystem;
 
@@ -97,8 +100,115 @@ const ScaleButton = ({ children, onPress, style }: { children: React.ReactNode, 
 
 export default function Home() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const { stats, formatBytes, reloadStats } = useStats();
+  const { triggerSound, triggerSelectionHaptic } = useFeedback();
   const [activeTab, setActiveTab] = useState<'home' | 'settings'>('home');
   const [isSourceMenuOpen, setSourceMenuOpen] = useState(false);
+
+  // Reload stats whenever screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      reloadStats();
+    }, [reloadStats])
+  );
+
+  // Tutorial State
+  const [isTutorialVisible, setTutorialVisible] = useState(false);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [layouts, setLayouts] = useState<Record<string, { x: number, y: number, width: number, height: number }>>({});
+
+  // Check for tutorial on mount
+  useEffect(() => {
+    const checkTutorial = async () => {
+      const completed = await AsyncStorage.getItem('tutorial_completed');
+      if (completed !== 'true' || params.showTutorial === 'true') {
+        setTimeout(() => setTutorialVisible(true), 1000);
+      }
+    };
+    checkTutorial();
+  }, [params.showTutorial]);
+
+  // Refs for measurement
+  const headerRef = React.useRef<View>(null);
+  const totalCardRef = React.useRef<View>(null);
+  const streakCardRef = React.useRef<View>(null);
+  const actionCardRef = React.useRef<View>(null); // Start/Source
+  const tabRef = React.useRef<View>(null);
+
+  const measureLayouts = () => {
+    const measure = (ref: any, key: string) => {
+      ref.current?.measureInWindow((x: number, y: number, width: number, height: number) => {
+        setLayouts(prev => ({ ...prev, [key]: { x, y, width, height } }));
+      });
+    };
+
+    setTimeout(() => {
+      measure(headerRef, 'header');
+      measure(totalCardRef, 'total');
+      measure(streakCardRef, 'streak');
+      measure(actionCardRef, 'actions');
+      measure(tabRef, 'tab');
+    }, 100);
+  };
+
+  useEffect(() => {
+    if (isTutorialVisible) {
+      measureLayouts();
+    }
+  }, [isTutorialVisible]);
+
+  const tutorialSteps: TutorialStep[] = [
+    {
+      key: 'header',
+      text: 'Aquí verás tu saludo y estado actual.',
+      ...(layouts['header'] || { x: 0, y: 0, width: 0, height: 0 }),
+      radius: 20
+    },
+    {
+      key: 'total',
+      text: 'Visualiza cuánto espacio has liberado en total.',
+      ...(layouts['total'] || { x: 0, y: 0, width: 0, height: 0 }),
+      radius: 20
+    },
+    {
+      key: 'streak',
+      text: '¡Mantén tu racha entrando a limpiar cada día!',
+      ...(layouts['streak'] || { x: 0, y: 0, width: 0, height: 0 }),
+      radius: 20
+    },
+    {
+      key: 'actions',
+      text: 'Toca aquí para elegir qué limpiar: Cámara, Álbumes o Carpetas.',
+      ...(layouts['actions'] || { x: 0, y: 0, width: 0, height: 0 }),
+      radius: 30
+    },
+    {
+      key: 'tab',
+      text: 'Configura tus preferencias en Ajustes.',
+      ...(layouts['tab'] || { x: 0, y: 0, width: 0, height: 0 }),
+      radius: 30
+    },
+  ].filter(s => s.width > 0);
+
+  const handleNextStep = async () => {
+    triggerSelectionHaptic();
+    if (currentStep < tutorialSteps.length - 1) {
+      setCurrentStep(prev => prev + 1);
+    } else {
+      setTutorialVisible(false);
+      await AsyncStorage.setItem('tutorial_completed', 'true');
+      router.setParams({ showTutorial: undefined });
+      setCurrentStep(0);
+    }
+  };
+
+  const handleSkip = async () => {
+    setTutorialVisible(false);
+    await AsyncStorage.setItem('tutorial_completed', 'true');
+    router.setParams({ showTutorial: undefined });
+    setCurrentStep(0);
+  };
 
   // Source Selection State
   const [sourceType, setSourceType] = useState<'camera' | 'album' | 'folder'>('camera');
@@ -355,7 +465,7 @@ export default function Home() {
                   // Use 0 if modificationTime is missing so it goes to the end
                   modificationTime: info.exists ? (info.modificationTime || 0) : 0
                 };
-              } catch (e) {
+              } catch {
                 return { uri: fileUri, modificationTime: 0 };
               }
             })
@@ -577,36 +687,37 @@ export default function Home() {
       <View style={{ flex: 1 }}>
         <View style={{ flex: 1, display: activeTab === 'home' ? 'flex' : 'none' }}>
           {/* Header */}
-          <View style={styles.header}>
+          <View style={styles.header} ref={headerRef} collapsable={false}>
             <View>
               <Text style={styles.greeting}>Bienvenido,</Text>
               <Text style={styles.mainTitle}>¡A limpiar se ha dicho</Text>
             </View>
+            {/*
             <TouchableOpacity style={styles.donateButton}>
               <Text style={styles.donateText}>Donar</Text>
               <Ionicons name="cafe" size={16} color="#fff" style={{ marginLeft: 4 }} />
             </TouchableOpacity>
+            */}
           </View>
 
           {/* Stats Cards */}
           <View style={styles.statsContainer}>
             {/* Total Freed Card */}
-            <View style={styles.statCard}>
-              <Text style={styles.statLabel}>Total</Text>
+            <View style={styles.statCard} ref={totalCardRef} collapsable={false}>
+              <Text style={styles.statLabel}>Total Liberados</Text>
               <View style={styles.statRow}>
-                <Text style={styles.statValue}>1.2 GB</Text>
-                <Text style={styles.statUnit}>Liberados</Text>
+                <Text style={styles.statValue}>{formatBytes(stats.totalFreedBytes)}</Text>
               </View>
             </View>
 
             {/* Streak Card */}
-            <View style={styles.statCard}>
+            <View style={styles.statCard} ref={streakCardRef} collapsable={false}>
               <View style={styles.streakHeader}>
                 <Text style={styles.statLabel}>Racha</Text>
                 <Ionicons name="flame" size={28} color="#f97316" />
               </View>
               <View style={styles.statRow}>
-                <Text style={styles.statValue}>30</Text>
+                <Text style={styles.statValue}>{stats.streakDays}</Text>
                 <Text style={styles.statUnit}>Dias</Text>
               </View>
             </View>
@@ -618,78 +729,82 @@ export default function Home() {
 
             <View style={styles.configCard}>
               {/* Cleaning Source */}
-              <ScaleButton
-                style={styles.configItem}
-                onPress={() => {
-                  setModalView('main'); // Ensure main view on open
-                  setSourceMenuOpen(true);
-                }}
-              >
-                <View style={styles.configHeader}>
-                  {/* Dynamic Icon */}
-                  <Ionicons
-                    name={sourceType === 'folder' ? "folder-open" : "images"}
-                    size={20} color="#9ca3af" style={{ marginRight: 8 }}
-                  />
-                  <Text style={styles.configLabel}>Limpiar de:</Text>
-                </View>
-                <View style={styles.configContent}>
-                  <View>
-                    <Text style={styles.configValue}>{folderName}</Text>
-                    <Text style={styles.configSub}>
-                      {`(${fileCount.toLocaleString()} ${sourceType === 'folder' ? 'elementos' : 'fotos'})`}
-                    </Text>
+              <View ref={actionCardRef} collapsable={false}>
+                <ScaleButton
+                  style={styles.configItem}
+                  onPress={() => {
+                    setModalView('main'); // Ensure main view on open
+                    setSourceMenuOpen(true);
+                  }}
+                >
+                  <View style={styles.configHeader}>
+                    {/* Dynamic Icon */}
+                    <Ionicons
+                      name={sourceType === 'folder' ? "folder-open" : "images"}
+                      size={20} color="#9ca3af" style={{ marginRight: 8 }}
+                    />
+                    <Text style={styles.configLabel}>Limpiar de:</Text>
                   </View>
-                  <Ionicons name="chevron-forward" size={20} color="#fff" />
-                </View>
-              </ScaleButton>
+                  <View style={styles.configContent}>
+                    <View>
+                      <Text style={styles.configValue}>{folderName}</Text>
+                      <Text style={styles.configSub}>
+                        {`(${fileCount.toLocaleString()} ${sourceType === 'folder' ? 'elementos' : 'fotos'})`}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="#fff" />
+                  </View>
+                </ScaleButton>
+              </View>
 
               <View style={styles.divider} />
 
               {/* Start Point */}
               {/* Start Point */}
-              <ScaleButton
-                style={styles.configItem}
-                onPress={() => setStartMenuOpen(true)}
-              >
-                <View style={styles.configHeader}>
-                  <Ionicons name="time" size={20} color="#9ca3af" style={{ marginRight: 8 }} />
-                  <Text style={styles.configLabel}>Iniciar desde:</Text>
-                </View>
-
-                <View style={styles.configContentTarget}>
-                  {manualSelection?.startAsset ? (
-                    <Image
-                      source={{ uri: manualSelection.startAsset.uri }}
-                      style={styles.previewBox}
-                      resizeMode="cover"
-                    />
-                  ) : latestAssetUri ? (
-                    <Image
-                      source={{ uri: latestAssetUri }}
-                      style={styles.previewBox}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <View style={styles.previewBox} />
-                  )}
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.configValue}>
-                      {selectionMode === 'manual'
-                        ? (manualSelection?.endAsset ? 'Rango Personalizado' : 'Punto de Inicio')
-                        : (selectionMode === 'resume' ? 'Retomar Sesión' : (sourceType === 'folder' ? 'Ultimo elemento' : 'Ultima foto'))
-                      }
-                    </Text>
-                    <Text style={styles.configSub}>
-                      {selectionMode === 'manual'
-                        ? (manualSelection?.endAsset ? 'Grupo de fotos seleccionado' : 'Desde foto seleccionada')
-                        : (selectionMode === 'resume' ? 'Desde donde lo dejaste' : '(Por defecto)')
-                      }
-                    </Text>
+              <View collapsable={false} style={{ width: '100%', marginBottom: 20 }}>
+                <ScaleButton
+                  style={styles.configItem}
+                  onPress={() => setStartMenuOpen(true)}
+                >
+                  <View style={styles.configHeader}>
+                    <Ionicons name="time" size={20} color="#9ca3af" style={{ marginRight: 8 }} />
+                    <Text style={styles.configLabel}>Iniciar desde:</Text>
                   </View>
-                  <Ionicons name="chevron-forward" size={20} color="#fff" />
-                </View>
-              </ScaleButton>
+
+                  <View style={styles.configContentTarget}>
+                    {manualSelection?.startAsset ? (
+                      <Image
+                        source={{ uri: manualSelection.startAsset.uri }}
+                        style={styles.previewBox}
+                        resizeMode="cover"
+                      />
+                    ) : latestAssetUri ? (
+                      <Image
+                        source={{ uri: latestAssetUri }}
+                        style={styles.previewBox}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={styles.previewBox} />
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.configValue}>
+                        {selectionMode === 'manual'
+                          ? (manualSelection?.endAsset ? 'Rango Personalizado' : 'Punto de Inicio')
+                          : (selectionMode === 'resume' ? 'Retomar Sesión' : (sourceType === 'folder' ? 'Ultimo elemento' : 'Ultima foto'))
+                        }
+                      </Text>
+                      <Text style={styles.configSub}>
+                        {selectionMode === 'manual'
+                          ? (manualSelection?.endAsset ? 'Grupo de fotos seleccionado' : 'Desde foto seleccionada')
+                          : (selectionMode === 'resume' ? 'Desde donde lo dejaste' : '(Por defecto)')
+                        }
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="#fff" />
+                  </View>
+                </ScaleButton>
+              </View>
             </View>
           </View>
         </View>
@@ -697,10 +812,10 @@ export default function Home() {
         <View style={{ flex: 1, display: activeTab === 'settings' ? 'flex' : 'none' }}>
           <SettingsScreen />
         </View>
-      </View>
+      </View >
 
       {/* Footer Navigation */}
-      <View style={styles.footer}>
+      <View style={styles.footer} ref={tabRef} collapsable={false}>
         <TabItem
           label="Inicio"
           iconName="home"
@@ -738,43 +853,47 @@ export default function Home() {
           onPress={() => setActiveTab('settings')}
           activeColor="#a855f7"
         />
-      </View>
+      </View >
 
       {/* Source Selection Menu (Absolute Overlay) */}
-      {isSourceMenuOpen && (
-        <Animated.View
-          style={[StyleSheet.absoluteFill, { zIndex: 2000, backgroundColor: 'rgba(0,0,0,0.85)' }]}
-          entering={FadeIn.duration(200)}
-          exiting={FadeOut.duration(200)}
-        >
-          <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill}>
-            <SafeAreaView style={styles.modalContainer}>
+      {
+        isSourceMenuOpen && (
+          <Animated.View
+            style={[StyleSheet.absoluteFill, { zIndex: 2000, backgroundColor: 'rgba(0,0,0,0.85)' }]}
+            entering={FadeIn.duration(200)}
+            exiting={FadeOut.duration(200)}
+          >
+            <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill}>
+              <SafeAreaView style={styles.modalContainer}>
 
-              <View style={styles.modalContent}>
-                {renderModalContent()}
-              </View>
+                <View style={styles.modalContent}>
+                  {renderModalContent()}
+                </View>
 
-            </SafeAreaView>
-          </BlurView>
-        </Animated.View>
-      )}
+              </SafeAreaView>
+            </BlurView>
+          </Animated.View>
+        )
+      }
 
       {/* Start Selection Menu (Absolute Overlay) */}
-      {isStartMenuOpen && (
-        <Animated.View
-          style={[StyleSheet.absoluteFill, { zIndex: 2000, backgroundColor: 'rgba(0,0,0,0.85)' }]}
-          entering={FadeIn.duration(200)}
-          exiting={FadeOut.duration(200)}
-        >
-          <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill}>
-            <SafeAreaView style={styles.modalContainer}>
-              <View style={styles.modalContent}>
-                {renderStartSelectionContent()}
-              </View>
-            </SafeAreaView>
-          </BlurView>
-        </Animated.View>
-      )}
+      {
+        isStartMenuOpen && (
+          <Animated.View
+            style={[StyleSheet.absoluteFill, { zIndex: 2000, backgroundColor: 'rgba(0,0,0,0.85)' }]}
+            entering={FadeIn.duration(200)}
+            exiting={FadeOut.duration(200)}
+          >
+            <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill}>
+              <SafeAreaView style={styles.modalContainer}>
+                <View style={styles.modalContent}>
+                  {renderStartSelectionContent()}
+                </View>
+              </SafeAreaView>
+            </BlurView>
+          </Animated.View>
+        )
+      }
 
       {/* Media Selector Modal */}
       <MediaSelectModal
@@ -789,7 +908,15 @@ export default function Home() {
         }}
       />
 
-    </SafeAreaView>
+      <TutorialOverlay
+        isVisible={isTutorialVisible}
+        steps={tutorialSteps}
+        currentStepIndex={currentStep}
+        onNext={handleNextStep}
+        onSkip={handleSkip}
+      />
+
+    </SafeAreaView >
   );
 }
 

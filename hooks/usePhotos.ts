@@ -100,8 +100,17 @@ export function usePhotos(params: UsePhotosParams = {}) {
 
                 // 4. Apply Manual Range OR Resume if needed
                 if (params.selectionMode === 'manual' && params.startAssetId && params.endAssetId) {
-                    const startIndex = finalAssets.findIndex((a) => a.id === params.startAssetId);
-                    const endIndex = finalAssets.findIndex((a) => a.id === params.endAssetId);
+                    const findIndexRobust = (targetId: string) => {
+                        const targetDecoded = decodeURIComponent(targetId);
+                        return finalAssets.findIndex(a => {
+                            if (a.id === targetId) return true;
+                            if (decodeURIComponent(a.id) === targetDecoded) return true;
+                            return false;
+                        });
+                    };
+
+                    const startIndex = findIndexRobust(params.startAssetId);
+                    const endIndex = findIndexRobust(params.endAssetId);
 
                     if (startIndex !== -1 && endIndex !== -1) {
                         const start = Math.min(startIndex, endIndex);
@@ -109,7 +118,8 @@ export function usePhotos(params: UsePhotosParams = {}) {
                         finalAssets = finalAssets.slice(start, end + 1);
                     } else if (params.startAssetId) {
                         // Just start from this one? (resume-like behavior in manual?)
-                        const start = finalAssets.findIndex((a) => a.id === params.startAssetId);
+                        // If end is missing but start exists, fallback to start->end
+                        const start = findIndexRobust(params.startAssetId);
                         if (start !== -1) finalAssets = finalAssets.slice(start);
                     }
                 } else if (params.selectionMode === 'resume' && params.startAssetId) {
