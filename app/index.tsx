@@ -6,13 +6,17 @@ import * as MediaLibrary from 'expo-media-library';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useState } from 'react';
-import { BackHandler, FlatList, Image, Pressable, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import Animated, { FadeIn, FadeOut, interpolate, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { Alert, BackHandler, FlatList, Image, Pressable, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import Animated, { interpolate, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import MediaSelectModal from '../components/MediaSelectModal';
 import SettingsScreen from '../components/SettingsScreen';
+import SplashScreen from '../components/SplashScreen';
 import { TutorialOverlay, TutorialStep } from '../components/Tutorial/TutorialOverlay';
+import { ThemeColors } from '../constants/Colors';
 import { useFeedback } from '../hooks/useFeedback';
+import { useLanguage } from '../hooks/useLanguage';
 import { useStats } from '../hooks/useStats';
+import { useThemeColor } from '../hooks/useThemeColor';
 
 const { StorageAccessFramework } = FileSystem;
 
@@ -22,16 +26,19 @@ const TabItem = ({
   iconName,
   isActive,
   onPress,
-  activeColor = "#a855f7",
-  inactiveColor = "#6b7280"
+  colors,
+  styles,
 }: {
   label: string;
   iconName: keyof typeof Ionicons.glyphMap;
   isActive: boolean;
   onPress: () => void;
-  activeColor?: string;
-  inactiveColor?: string;
+  colors: ThemeColors;
+  styles: any;
 }) => {
+  const activeColor = colors.accent;
+  const inactiveColor = colors.navInactive;
+
   // Use useDerivedValue for better stability
   const animation = useSharedValue(isActive ? 1 : 0);
 
@@ -102,7 +109,7 @@ export default function Home() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { stats, formatBytes, reloadStats } = useStats();
-  const { triggerSound, triggerSelectionHaptic } = useFeedback();
+  const { triggerSelectionHaptic } = useFeedback();
   const [activeTab, setActiveTab] = useState<'home' | 'settings'>('home');
   const [isSourceMenuOpen, setSourceMenuOpen] = useState(false);
 
@@ -118,8 +125,42 @@ export default function Home() {
   const [currentStep, setCurrentStep] = useState(0);
   const [layouts, setLayouts] = useState<Record<string, { x: number, y: number, width: number, height: number }>>({});
 
-  // Check for tutorial on mount
+  // Loading State for Splash
+  const [isLoading, setIsLoading] = useState(true);
+  const colors = useThemeColor();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
+  const { language, t: allTranslations, changeLanguage, isLoaded } = useLanguage();
+  const t = allTranslations.main;
+  const tTutorial = allTranslations.settings;
+  // but let's use what we have or extend Translations.ts if needed.
+  // Actually, I should probably add tutorial translations to Translations.ts to be clean.
+  // For now I'll use the ones I put in settings or hardcode logical ones.
+  // Wait, I'll update Translations.ts first to include tutorial and more index strings.
+
+  // Check First Launch & Splash
   useEffect(() => {
+    const checkFirstLaunch = async () => {
+      // Intentional delay for splash screen visibility (User request "telon")
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      try {
+        const onboardingCompleted = await AsyncStorage.getItem('onboarding_completed');
+        if (onboardingCompleted !== 'true') {
+          router.replace('/onboarding');
+        } else {
+          setIsLoading(false);
+        }
+      } catch {
+        setIsLoading(false);
+      }
+    };
+    checkFirstLaunch();
+  }, [router]);
+
+  // Check for tutorial on mount (only if loaded)
+  useEffect(() => {
+    if (isLoading) return;
+
     const checkTutorial = async () => {
       const completed = await AsyncStorage.getItem('tutorial_completed');
       if (completed !== 'true' || params.showTutorial === 'true') {
@@ -127,7 +168,10 @@ export default function Home() {
       }
     };
     checkTutorial();
-  }, [params.showTutorial]);
+  }, [params.showTutorial, isLoading, router]);
+
+  // Refs for measurement
+
 
   // Refs for measurement
   const headerRef = React.useRef<View>(null);
@@ -161,31 +205,31 @@ export default function Home() {
   const tutorialSteps: TutorialStep[] = [
     {
       key: 'header',
-      text: 'Aquí verás tu saludo y estado actual.',
+      text: tTutorial.tutorial.header,
       ...(layouts['header'] || { x: 0, y: 0, width: 0, height: 0 }),
       radius: 20
     },
     {
       key: 'total',
-      text: 'Visualiza cuánto espacio has liberado en total.',
+      text: tTutorial.tutorial.total,
       ...(layouts['total'] || { x: 0, y: 0, width: 0, height: 0 }),
       radius: 20
     },
     {
       key: 'streak',
-      text: '¡Mantén tu racha entrando a limpiar cada día!',
+      text: tTutorial.tutorial.streak,
       ...(layouts['streak'] || { x: 0, y: 0, width: 0, height: 0 }),
       radius: 20
     },
     {
       key: 'actions',
-      text: 'Toca aquí para elegir qué limpiar: Cámara, Álbumes o Carpetas.',
+      text: tTutorial.tutorial.actions,
       ...(layouts['actions'] || { x: 0, y: 0, width: 0, height: 0 }),
       radius: 30
     },
     {
       key: 'tab',
-      text: 'Configura tus preferencias en Ajustes.',
+      text: tTutorial.tutorial.tab,
       ...(layouts['tab'] || { x: 0, y: 0, width: 0, height: 0 }),
       radius: 30
     },
@@ -212,7 +256,7 @@ export default function Home() {
 
   // Source Selection State
   const [sourceType, setSourceType] = useState<'camera' | 'album' | 'folder'>('camera');
-  const [folderName, setFolderName] = useState('Cámara');
+  const [folderName, setFolderName] = useState(language === 'es' ? 'Cámara' : 'Camera');
   const [fileCount, setFileCount] = useState(1205);
   const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null);
   const [selectedFolderUri, setSelectedFolderUri] = useState<string | null>(null);
@@ -438,7 +482,15 @@ export default function Home() {
         const uri = permissions.directoryUri;
         setSelectedFolderUri(uri); // Save URI for later use
         const decodedName = decodeURIComponent(uri.split('%3A').pop() || 'Carpeta');
-        const files = await StorageAccessFramework.readDirectoryAsync(uri);
+
+        let files: string[] = [];
+        try {
+          files = await StorageAccessFramework.readDirectoryAsync(uri);
+        } catch (e) {
+          console.warn("Folder access failed (handled):", e);
+          Alert.alert("Error", "No se puede acceder a esta carpeta. Por favor selecciona otra.");
+          return;
+        }
 
         // Filter for valid media files only
         const validExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.mp4', '.mov'];
@@ -502,7 +554,7 @@ export default function Home() {
     if (modalView === 'albums') {
       return (
         <View style={{ flex: 1 }}>
-          <Text style={styles.modalTitle}>Selecciona un Álbum</Text>
+          <Text style={styles.modalTitle}>{t.source.selectAlbum}</Text>
 
           <FlatList
             data={albums}
@@ -528,7 +580,7 @@ export default function Home() {
 
                 <View style={{ flex: 1 }}>
                   <Text style={styles.albumTitle}>{item.title}</Text>
-                  <Text style={styles.albumCount}>{item.assetCount} fotos</Text>
+                  <Text style={styles.albumCount}>{item.assetCount} {t.stats.photos}</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color="#6b7280" />
               </TouchableOpacity>
@@ -538,10 +590,10 @@ export default function Home() {
           <Pressable
             onPress={() => setModalView('main')}
             style={styles.bottomBackButton}
-            android_ripple={{ color: 'rgba(255, 255, 255, 0.2)', borderless: true, radius: 60 }}
+            android_ripple={{ color: colors.separator, borderless: true, radius: 60 }}
           >
-            <Ionicons name="arrow-back-circle-outline" size={42} color="rgba(255,255,255,0.7)" />
-            <Text style={styles.bottomBackText}>Volver</Text>
+            <Ionicons name="arrow-back-circle-outline" size={42} color={colors.textSecondary} />
+            <Text style={styles.bottomBackText}>{t.source.back}</Text>
           </Pressable>
         </View>
       );
@@ -550,8 +602,8 @@ export default function Home() {
     return (
       <View style={{ flex: 1 }}>
         <View style={{ flex: 1, justifyContent: 'center' }}>
-          <Text style={styles.modalTitle}>Seleccionar Fuente</Text>
-          <Text style={styles.modalSubtitle}>¿De dónde quieres limpiar fotos?</Text>
+          <Text style={styles.modalTitle}>{t.source.chooseSource}</Text>
+          <Text style={styles.modalSubtitle}>{t.source.chooseSource}</Text>
 
           <View style={styles.sourceGrid}>
             {/* Option 1: Gallery (Albums) */}
@@ -563,8 +615,8 @@ export default function Home() {
               <View style={[styles.iconCircle, { backgroundColor: '#c026d3' }]}>
                 <Ionicons name="images" size={32} color="#fff" />
               </View>
-              <Text style={styles.sourceLabel}>Galería</Text>
-              <Text style={styles.sourceDesc}>Tus álbumes de fotos</Text>
+              <Text style={styles.sourceLabel}>{t.source.gallery}</Text>
+              <Text style={styles.sourceDesc}>{t.source.yourAlbums}</Text>
             </TouchableOpacity>
 
             {/* Option 2: File Explorer */}
@@ -576,8 +628,8 @@ export default function Home() {
               <View style={[styles.iconCircle, { backgroundColor: '#2563eb' }]}>
                 <Ionicons name="folder-open" size={32} color="#fff" />
               </View>
-              <Text style={styles.sourceLabel}>Archivos</Text>
-              <Text style={styles.sourceDesc}>Explora carpetas del sistema</Text>
+              <Text style={styles.sourceLabel}>{t.source.files}</Text>
+              <Text style={styles.sourceDesc}>{t.source.exploreFolders}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -586,10 +638,10 @@ export default function Home() {
         <Pressable
           onPress={() => setSourceMenuOpen(false)}
           style={styles.bottomBackButton}
-          android_ripple={{ color: 'rgba(255, 255, 255, 0.2)', borderless: true, radius: 60 }}
+          android_ripple={{ color: colors.separator, borderless: true, radius: 60 }}
         >
-          <Ionicons name="close-circle-outline" size={42} color="rgba(255,255,255,0.7)" />
-          <Text style={styles.bottomBackText}>Cancelar</Text>
+          <Ionicons name="close-circle-outline" size={42} color={colors.textSecondary} />
+          <Text style={styles.bottomBackText}>{t.source.cancel}</Text>
         </Pressable>
       </View>
     );
@@ -599,8 +651,8 @@ export default function Home() {
   const renderStartSelectionContent = () => {
     return (
       <View style={{ flex: 1, justifyContent: 'center' }}>
-        <Text style={styles.modalTitle}>¿Cómo deseas iniciar?</Text>
-        <Text style={styles.modalSubtitle}>Elige el punto de partida para limpiar</Text>
+        <Text style={styles.modalTitle}>{t.source.howToStart}</Text>
+        <Text style={styles.modalSubtitle}>{t.source.startPoint}</Text>
 
         <View style={styles.startOptionsContainer}>
           {/* Option 1: Resume Session */}
@@ -619,9 +671,9 @@ export default function Home() {
               <Ionicons name="reload" size={24} color="#fff" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.startOptionTitle}>Retomar Sesión</Text>
+              <Text style={styles.startOptionTitle}>{t.source.resume}</Text>
               <Text style={styles.startOptionDesc}>
-                {resumeSession ? "Continuar donde lo dejaste" : "No hay sesión anterior"}
+                {resumeSession ? t.source.resumeDesc : t.source.noResume}
               </Text>
             </View>
             {resumeSession && <Ionicons name="chevron-forward" size={20} color="#6b7280" />}
@@ -641,8 +693,8 @@ export default function Home() {
               <Ionicons name="flash" size={24} color="#fff" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.startOptionTitle}>Más Reciente</Text>
-              <Text style={styles.startOptionDesc}>Empezar por el último elemento (Por defecto)</Text>
+              <Text style={styles.startOptionTitle}>{t.source.mostRecent}</Text>
+              <Text style={styles.startOptionDesc}>{t.source.recentDesc}</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#6b7280" />
           </TouchableOpacity>
@@ -659,8 +711,8 @@ export default function Home() {
               <Ionicons name="grid" size={24} color="#fff" />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.startOptionTitle}>Selección Manual</Text>
-              <Text style={styles.startOptionDesc}>Elegir foto inicial o rango específico</Text>
+              <Text style={styles.startOptionTitle}>{t.source.manual}</Text>
+              <Text style={styles.startOptionDesc}>{t.source.manualDesc}</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#6b7280" />
           </TouchableOpacity>
@@ -670,18 +722,22 @@ export default function Home() {
         <Pressable
           onPress={() => setStartMenuOpen(false)}
           style={styles.bottomBackButton}
-          android_ripple={{ color: 'rgba(255, 255, 255, 0.2)', borderless: true, radius: 60 }}
+          android_ripple={{ color: colors.separator, borderless: true, radius: 60 }}
         >
-          <Ionicons name="close-circle-outline" size={42} color="rgba(255,255,255,0.7)" />
-          <Text style={styles.bottomBackText}>Cancelar</Text>
+          <Ionicons name="close-circle-outline" size={42} color={colors.textSecondary} />
+          <Text style={styles.bottomBackText}>{t.source.cancel}</Text>
         </Pressable>
       </View>
     );
   };
 
+  if (isLoading || !isLoaded) {
+    return <SplashScreen />;
+  }
+
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar style="light" />
+      <StatusBar style="auto" />
 
       {/* Main Content Area */}
       <View style={{ flex: 1 }}>
@@ -689,8 +745,8 @@ export default function Home() {
           {/* Header */}
           <View style={styles.header} ref={headerRef} collapsable={false}>
             <View>
-              <Text style={styles.greeting}>Bienvenido,</Text>
-              <Text style={styles.mainTitle}>¡A limpiar se ha dicho</Text>
+              <Text style={styles.greeting}>{t.welcome}</Text>
+              <Text style={styles.mainTitle}>{t.startNow}</Text>
             </View>
             {/*
             <TouchableOpacity style={styles.donateButton}>
@@ -704,7 +760,7 @@ export default function Home() {
           <View style={styles.statsContainer}>
             {/* Total Freed Card */}
             <View style={styles.statCard} ref={totalCardRef} collapsable={false}>
-              <Text style={styles.statLabel}>Total Liberados</Text>
+              <Text style={styles.statLabel}>{t.stats.photos}</Text>
               <View style={styles.statRow}>
                 <Text style={styles.statValue}>{formatBytes(stats.totalFreedBytes)}</Text>
               </View>
@@ -713,19 +769,19 @@ export default function Home() {
             {/* Streak Card */}
             <View style={styles.statCard} ref={streakCardRef} collapsable={false}>
               <View style={styles.streakHeader}>
-                <Text style={styles.statLabel}>Racha</Text>
+                <Text style={styles.statLabel}>{t.stats.streak}</Text>
                 <Ionicons name="flame" size={28} color="#f97316" />
               </View>
               <View style={styles.statRow}>
                 <Text style={styles.statValue}>{stats.streakDays}</Text>
-                <Text style={styles.statUnit}>Dias</Text>
+                <Text style={styles.statUnit}>{t.stats.days}</Text>
               </View>
             </View>
           </View>
 
           {/* Configuration Section */}
           <View style={styles.configContainer}>
-            <Text style={styles.sectionTitle}>Configuración de Limpieza</Text>
+            <Text style={styles.sectionTitle}>{t.config.title}</Text>
 
             <View style={styles.configCard}>
               {/* Cleaning Source */}
@@ -741,18 +797,18 @@ export default function Home() {
                     {/* Dynamic Icon */}
                     <Ionicons
                       name={sourceType === 'folder' ? "folder-open" : "images"}
-                      size={20} color="#9ca3af" style={{ marginRight: 8 }}
+                      size={20} color={colors.icon} style={{ marginRight: 8 }}
                     />
-                    <Text style={styles.configLabel}>Limpiar de:</Text>
+                    <Text style={styles.configLabel}>{t.source.title}</Text>
                   </View>
                   <View style={styles.configContent}>
                     <View>
                       <Text style={styles.configValue}>{folderName}</Text>
                       <Text style={styles.configSub}>
-                        {`(${fileCount.toLocaleString()} ${sourceType === 'folder' ? 'elementos' : 'fotos'})`}
+                        {`(${fileCount.toLocaleString()} ${sourceType === 'folder' ? t.config.items : t.config.photos})`}
                       </Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={20} color="#fff" />
+                    <Ionicons name="chevron-forward" size={20} color={colors.text} />
                   </View>
                 </ScaleButton>
               </View>
@@ -767,8 +823,8 @@ export default function Home() {
                   onPress={() => setStartMenuOpen(true)}
                 >
                   <View style={styles.configHeader}>
-                    <Ionicons name="time" size={20} color="#9ca3af" style={{ marginRight: 8 }} />
-                    <Text style={styles.configLabel}>Iniciar desde:</Text>
+                    <Ionicons name="time" size={20} color={colors.icon} style={{ marginRight: 8 }} />
+                    <Text style={styles.configLabel}>{t.source.startFrom}</Text>
                   </View>
 
                   <View style={styles.configContentTarget}>
@@ -790,18 +846,18 @@ export default function Home() {
                     <View style={{ flex: 1 }}>
                       <Text style={styles.configValue}>
                         {selectionMode === 'manual'
-                          ? (manualSelection?.endAsset ? 'Rango Personalizado' : 'Punto de Inicio')
-                          : (selectionMode === 'resume' ? 'Retomar Sesión' : (sourceType === 'folder' ? 'Ultimo elemento' : 'Ultima foto'))
+                          ? (manualSelection?.endAsset ? t.config.customRange : t.config.startPoint)
+                          : (selectionMode === 'resume' ? t.source.resume : (sourceType === 'folder' ? t.config.latestItem : t.config.latestPhoto))
                         }
                       </Text>
                       <Text style={styles.configSub}>
                         {selectionMode === 'manual'
-                          ? (manualSelection?.endAsset ? 'Grupo de fotos seleccionado' : 'Desde foto seleccionada')
-                          : (selectionMode === 'resume' ? 'Desde donde lo dejaste' : '(Por defecto)')
+                          ? (manualSelection?.endAsset ? t.config.selectedGroup : t.config.fromSelected)
+                          : (selectionMode === 'resume' ? t.config.fromResume : t.config.default)
                         }
                       </Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={20} color="#fff" />
+                    <Ionicons name="chevron-forward" size={20} color={colors.text} />
                   </View>
                 </ScaleButton>
               </View>
@@ -810,23 +866,37 @@ export default function Home() {
         </View>
 
         <View style={{ flex: 1, display: activeTab === 'settings' ? 'flex' : 'none' }}>
-          <SettingsScreen />
+          <SettingsScreen language={language} onLanguageChange={changeLanguage} />
         </View>
       </View >
 
       {/* Footer Navigation */}
       <View style={styles.footer} ref={tabRef} collapsable={false}>
         <TabItem
-          label="Inicio"
+          label={t.tabs.home}
           iconName="home"
           isActive={activeTab === 'home'}
           onPress={() => setActiveTab('home')}
+          colors={colors}
+          styles={styles}
         />
 
         <View style={styles.playButtonContainer}>
           <TouchableOpacity
-            style={styles.playButton}
+            style={[styles.playButton, { backgroundColor: colors.accent, borderColor: colors.background }]}
             onPress={() => {
+              // Robustly calculate date range with buffer to ensure inclusivity
+              let minDateParam = undefined;
+              let maxDateParam = undefined;
+
+              if (selectionMode === 'manual' && manualSelection?.startAsset?.creationTime && manualSelection?.endAsset?.creationTime) {
+                const t1 = manualSelection.startAsset.creationTime;
+                const t2 = manualSelection.endAsset.creationTime;
+                // Add 1s buffer because createdAfter/Before are exclusive
+                minDateParam = Math.min(t1, t2) - 1000;
+                maxDateParam = Math.max(t1, t2) + 1000;
+              }
+
               router.push({
                 pathname: '/swipe',
                 params: {
@@ -835,7 +905,9 @@ export default function Home() {
                   selectionMode,
                   startAssetId: selectionMode === 'resume' ? resumeSession?.startAssetId : manualSelection?.startAsset?.id,
                   endAssetId: manualSelection?.endAsset?.id,
-                  title: sourceType === 'album' ? (folderName || 'Galería') : folderName
+                  title: sourceType === 'album' ? (folderName || 'Galería') : folderName,
+                  minDate: minDateParam,
+                  maxDate: maxDateParam,
                 }
               });
             }}
@@ -843,57 +915,50 @@ export default function Home() {
           >
             <Ionicons name="play" size={32} color="#fff" style={{ marginLeft: 4 }} />
           </TouchableOpacity>
-          <Text style={styles.startText}>Comenzar</Text>
+          <Text style={[styles.startText, { color: colors.text }]}>{t.source.start}</Text>
         </View>
 
         <TabItem
-          label="Ajustes"
+          label={t.tabs.settings}
           iconName="settings-outline"
           isActive={activeTab === 'settings'}
           onPress={() => setActiveTab('settings')}
-          activeColor="#a855f7"
+          colors={colors}
+          styles={styles}
         />
       </View >
 
       {/* Source Selection Menu (Absolute Overlay) */}
-      {
-        isSourceMenuOpen && (
-          <Animated.View
-            style={[StyleSheet.absoluteFill, { zIndex: 2000, backgroundColor: 'rgba(0,0,0,0.85)' }]}
-            entering={FadeIn.duration(200)}
-            exiting={FadeOut.duration(200)}
-          >
-            <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill}>
-              <SafeAreaView style={styles.modalContainer}>
-
-                <View style={styles.modalContent}>
-                  {renderModalContent()}
-                </View>
-
-              </SafeAreaView>
-            </BlurView>
-          </Animated.View>
-        )
-      }
+      <Animated.View
+        pointerEvents={isSourceMenuOpen ? 'auto' : 'none'}
+        style={[StyleSheet.absoluteFill, { zIndex: 2000, backgroundColor: colors.overlay, opacity: isSourceMenuOpen ? 1 : 0 }]}
+      >
+        {isSourceMenuOpen && (
+          <BlurView intensity={20} tint={colors.blurTint as any} style={StyleSheet.absoluteFill}>
+            <SafeAreaView style={styles.modalContainer}>
+              <View style={styles.modalContent}>
+                {renderModalContent()}
+              </View>
+            </SafeAreaView>
+          </BlurView>
+        )}
+      </Animated.View>
 
       {/* Start Selection Menu (Absolute Overlay) */}
-      {
-        isStartMenuOpen && (
-          <Animated.View
-            style={[StyleSheet.absoluteFill, { zIndex: 2000, backgroundColor: 'rgba(0,0,0,0.85)' }]}
-            entering={FadeIn.duration(200)}
-            exiting={FadeOut.duration(200)}
-          >
-            <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill}>
-              <SafeAreaView style={styles.modalContainer}>
-                <View style={styles.modalContent}>
-                  {renderStartSelectionContent()}
-                </View>
-              </SafeAreaView>
-            </BlurView>
-          </Animated.View>
-        )
-      }
+      <Animated.View
+        pointerEvents={isStartMenuOpen ? 'auto' : 'none'}
+        style={[StyleSheet.absoluteFill, { zIndex: 2000, backgroundColor: colors.overlay, opacity: isStartMenuOpen ? 1 : 0 }]}
+      >
+        {isStartMenuOpen && (
+          <BlurView intensity={20} tint={colors.blurTint as any} style={StyleSheet.absoluteFill}>
+            <SafeAreaView style={styles.modalContainer}>
+              <View style={styles.modalContent}>
+                {renderStartSelectionContent()}
+              </View>
+            </SafeAreaView>
+          </BlurView>
+        )}
+      </Animated.View>
 
       {/* Media Selector Modal */}
       <MediaSelectModal
@@ -920,10 +985,10 @@ export default function Home() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#110F18',
+    backgroundColor: colors.background,
   },
   header: {
     paddingHorizontal: 20,
@@ -935,19 +1000,19 @@ const styles = StyleSheet.create({
   },
   greeting: {
     fontSize: 16,
-    color: '#9ca3af',
+    color: colors.textSecondary,
     marginBottom: 4,
   },
   mainTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text,
     maxWidth: 200,
   },
   donateButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#c026d3', // Purple/Pink
+    backgroundColor: colors.accent,
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 20,
@@ -960,7 +1025,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 34,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text,
   },
   statsContainer: {
     flexDirection: 'row',
@@ -970,7 +1035,7 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: '#1C1C2E',
+    backgroundColor: colors.card,
     borderRadius: 16,
     padding: 16,
     justifyContent: 'space-between',
@@ -988,16 +1053,16 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   statLabel: {
-    color: '#9ca3af',
+    color: colors.textSecondary,
     fontSize: 14,
   },
   statValue: {
-    color: '#fff',
+    color: colors.text,
     fontSize: 24,
     fontWeight: 'bold',
   },
   statUnit: {
-    color: '#9ca3af',
+    color: colors.textSecondary,
     fontSize: 14,
   },
   configContainer: {
@@ -1005,12 +1070,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   sectionTitle: {
-    color: '#9ca3af',
+    color: colors.textSecondary,
     fontSize: 16,
     marginBottom: 12,
   },
   configCard: {
-    backgroundColor: '#1C1C2E',
+    backgroundColor: colors.card,
     borderRadius: 16,
     padding: 20,
   },
@@ -1023,7 +1088,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   configLabel: {
-    color: '#9ca3af',
+    color: colors.textSecondary,
     fontSize: 16,
   },
   configContent: {
@@ -1041,42 +1106,44 @@ const styles = StyleSheet.create({
   previewBox: {
     width: 60,
     height: 60,
-    backgroundColor: '#d1d5db',
+    backgroundColor: colors.statCard,
     borderRadius: 12,
   },
   configValue: {
-    color: '#fff',
+    color: colors.text,
     fontSize: 20,
     fontWeight: '600',
   },
   configSub: {
-    color: '#9ca3af',
+    color: colors.textSecondary,
     fontSize: 14,
   },
   divider: {
     height: 1,
-    backgroundColor: '#2D2D44',
+    backgroundColor: colors.separator,
     marginVertical: 16,
   },
   footer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'flex-end',
-    paddingBottom: 30,
+    paddingBottom: 50, // Increased from 30
     paddingHorizontal: 20,
-    backgroundColor: '#16141F', // Slightly lighter than bg for differentiation
-    height: 100,
+    backgroundColor: colors.card,
+    height: 120, // Increased from 100
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
+    borderTopWidth: 1,
+    borderTopColor: colors.cardBorder,
   },
   navItem: {
     alignItems: 'center',
     marginBottom: 8,
-    width: 60, // Ensure touch target
+    width: 60,
     height: 50,
-    justifyContent: 'flex-end', // Align bottom
+    justifyContent: 'flex-end',
   },
   navText: {
     fontSize: 12,
@@ -1085,33 +1152,29 @@ const styles = StyleSheet.create({
   },
   playButtonContainer: {
     alignItems: 'center',
-    bottom: 20, // push it up
+    bottom: 20,
   },
   playButton: {
     width: 70,
     height: 70,
     borderRadius: 35,
-    backgroundColor: '#c026d3', // Pink/Purple gradient equivalent
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#c026d3',
+    shadowColor: colors.accent,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.5,
     shadowRadius: 10,
     elevation: 10,
     marginBottom: 8,
     borderWidth: 4,
-    borderColor: '#2e1065', // Dark border to match bg visual
   },
   startText: {
-    color: '#fff',
     fontWeight: '600',
     fontSize: 16,
   },
-  // Modal Styles
   modalContainer: {
     flex: 1,
-    paddingTop: 60, // Increased to avoid notch/status bar
+    paddingTop: 60,
   },
   modalHeader: {
     paddingHorizontal: 20,
@@ -1121,14 +1184,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    backgroundColor: colors.card,
     borderRadius: 20,
     paddingRight: 12,
     paddingLeft: 4,
     paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
   },
   modalBackText: {
-    color: '#fff',
+    color: colors.text,
     fontSize: 16,
     fontWeight: '500',
   },
@@ -1136,18 +1201,18 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 20,
     justifyContent: 'center',
-    paddingBottom: 100, // Adjust for center vertically visually
+    paddingBottom: 100,
   },
   modalTitle: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#fff',
+    color: colors.text,
     textAlign: 'center',
     marginBottom: 8,
   },
   modalSubtitle: {
     fontSize: 16,
-    color: '#9ca3af',
+    color: colors.textSecondary,
     textAlign: 'center',
     marginBottom: 40,
   },
@@ -1159,12 +1224,12 @@ const styles = StyleSheet.create({
   },
   sourceCard: {
     width: '45%',
-    backgroundColor: '#1C1C2E',
+    backgroundColor: colors.card,
     borderRadius: 20,
     padding: 20,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: colors.cardBorder,
   },
   iconCircle: {
     width: 60,
@@ -1175,13 +1240,13 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   sourceLabel: {
-    color: '#fff',
+    color: colors.text,
     fontSize: 18,
     fontWeight: '600',
     marginBottom: 4,
   },
   sourceDesc: {
-    color: '#9ca3af',
+    color: colors.textSecondary,
     fontSize: 12,
     textAlign: 'center',
   },
@@ -1191,40 +1256,38 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
     marginTop: 40,
   },
-  // Album List Styles
   albumItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
+    borderBottomColor: colors.separator,
   },
   albumIcon: {
     width: 48,
     height: 48,
     borderRadius: 12,
-    backgroundColor: '#2D2D44',
+    backgroundColor: colors.statCard,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 16,
   },
   albumTitle: {
-    color: '#fff',
+    color: colors.text,
     fontSize: 16,
     fontWeight: '600',
     marginBottom: 4,
   },
   albumCount: {
-    color: '#9ca3af',
+    color: colors.textSecondary,
     fontSize: 14,
   },
   bottomBackText: {
-    color: 'rgba(255,255,255,0.7)',
+    color: colors.textSecondary,
     fontSize: 14,
     marginTop: 8,
     fontWeight: '600',
   },
-  // Start Option Styles
   startOptionsContainer: {
     gap: 16,
     width: '100%',
@@ -1232,11 +1295,11 @@ const styles = StyleSheet.create({
   startOptionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1C1C2E',
+    backgroundColor: colors.card,
     padding: 16,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: colors.cardBorder,
   },
   iconCircleSmall: {
     width: 40,
@@ -1247,13 +1310,13 @@ const styles = StyleSheet.create({
     marginRight: 16,
   },
   startOptionTitle: {
-    color: '#fff',
+    color: colors.text,
     fontSize: 16,
     fontWeight: '600',
     marginBottom: 2,
   },
   startOptionDesc: {
-    color: '#9ca3af',
+    color: colors.textSecondary,
     fontSize: 12,
   }
 });

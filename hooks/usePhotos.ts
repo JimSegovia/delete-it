@@ -10,6 +10,8 @@ export interface PhotoAsset extends Partial<MediaLibrary.Asset> {
     id: string; // Ensure id is always present (uri for files)
     modificationTime?: number;
     fileSize?: number;
+    mediaType?: MediaLibrary.MediaTypeValue;
+    creationTime?: number;
 }
 
 export interface UsePhotosParams {
@@ -18,6 +20,8 @@ export interface UsePhotosParams {
     selectionMode?: 'default' | 'manual' | 'resume';
     startAssetId?: string;
     endAssetId?: string;
+    minDate?: number; // For manual range
+    maxDate?: number; // For manual range
 }
 
 export function usePhotos(params: UsePhotosParams = {}) {
@@ -52,7 +56,7 @@ export function usePhotos(params: UsePhotosParams = {}) {
             try {
                 const hideFavSetting = await AsyncStorage.getItem('deleteit_hideFavorites');
                 shouldHideFavorites = hideFavSetting === 'true';
-            } catch (e) {
+            } catch {
                 // ignore
             }
 
@@ -64,22 +68,37 @@ export function usePhotos(params: UsePhotosParams = {}) {
             if (params.sourceType === 'folder' && params.sourceId) {
                 // FOLDER LOGIC
                 // 1. Read Directory
-                const files = await StorageAccessFramework.readDirectoryAsync(params.sourceId);
+                let files: string[] = [];
+                try {
+                    files = await StorageAccessFramework.readDirectoryAsync(params.sourceId);
+                } catch (e) {
+                    console.warn("Folder access revoked/failed (handled):", e);
+                    setError("No se puede acceder a esta carpeta. Intente con otra.");
+                    setLoading(false);
+                    return;
+                }
 
                 // 2. Filter Valid Extensions
-                const validExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.mp4', '.mov'];
+                const validExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.mp4', '.mov', '.avi', '.mkv', '.webm', '.pdf', '.doc', '.docx', '.xls', '.xlsx'];
                 const mediaFiles = files.filter(fileUri => {
                     const decodedUri = decodeURIComponent(fileUri).toLowerCase();
                     return validExtensions.some(ext => decodedUri.endsWith(ext));
                 });
 
-                // 3. Get Info & Sort (Expensive for many files, but necessary for order)
-                // Optimization: In real app, maybe cached or lazy loaded.
+                // 3. Get Info & Sort
                 const filesWithInfo = await Promise.all(
                     mediaFiles.map(async (uri) => {
                         try {
                             const info = await FileSystem.getInfoAsync(uri);
-                            const mediaType: MediaLibrary.MediaTypeValue = uri.toLowerCase().endsWith('.mp4') || uri.toLowerCase().endsWith('.mov') ? 'video' : 'photo';
+                            const lowerUri = uri.toLowerCase();
+
+                            let mediaType: MediaLibrary.MediaTypeValue = 'photo';
+                            if (lowerUri.endsWith('.mp4') || lowerUri.endsWith('.mov') || lowerUri.endsWith('.avi') || lowerUri.endsWith('.mkv') || lowerUri.endsWith('.webm')) {
+                                mediaType = 'video';
+                            } else if (lowerUri.endsWith('.pdf') || lowerUri.endsWith('.doc') || lowerUri.endsWith('.docx') || lowerUri.endsWith('.xls') || lowerUri.endsWith('.xlsx')) {
+                                mediaType = 'unknown';
+                            }
+
                             return {
                                 uri,
                                 id: uri,
@@ -87,18 +106,18 @@ export function usePhotos(params: UsePhotosParams = {}) {
                                 fileSize: info.exists ? info.size : 0,
                                 mediaType: mediaType,
                             };
-                        } catch (e) {
+                        } catch {
                             return { uri, id: uri, modificationTime: 0, fileSize: 0, mediaType: 'photo' as MediaLibrary.MediaTypeValue };
                         }
                     })
                 );
 
-                // Sort Newest First (descending)
+                // Sort by MODIFICATION TIME for folders (Creation time not reliable on FS)
                 filesWithInfo.sort((a, b) => (b.modificationTime || 0) - (a.modificationTime || 0));
 
                 let finalAssets = filesWithInfo;
 
-                // 4. Apply Manual Range OR Resume if needed
+                // 4. Apply Manual Range OR Resume
                 if (params.selectionMode === 'manual' && params.startAssetId && params.endAssetId) {
                     const findIndexRobust = (targetId: string) => {
                         const targetDecoded = decodeURIComponent(targetId);
@@ -116,54 +135,40 @@ export function usePhotos(params: UsePhotosParams = {}) {
                         const start = Math.min(startIndex, endIndex);
                         const end = Math.max(startIndex, endIndex);
                         finalAssets = finalAssets.slice(start, end + 1);
-                    } else if (params.startAssetId) {
-                        // Just start from this one? (resume-like behavior in manual?)
-                        // If end is missing but start exists, fallback to start->end
-                        const start = findIndexRobust(params.startAssetId);
-                        if (start !== -1) finalAssets = finalAssets.slice(start);
                     }
                 } else if (params.selectionMode === 'resume' && params.startAssetId) {
-                    // Resume for Folder: Find the last swiped ID (URI), start AFTER it.
-                    // Normalize URIs for comparison (some might be encoded, some not)
                     const targetId = decodeURIComponent(params.startAssetId);
-
-                    // Extract filename from target (everything after last / or %2F)
                     const targetDecoded = decodeURIComponent(targetId);
                     const targetFilename = targetDecoded.split('/').pop()?.split('%2F').pop();
 
                     const lastSwipedIndex = finalAssets.findIndex((a) => {
-                        // 1. Exact or Decoded ID Match
                         const currentDecoded = decodeURIComponent(a.id);
                         if (a.id === params.startAssetId || currentDecoded === targetDecoded) return true;
-
-                        // 2. Filename Match (fallback)
                         const currentFilename = currentDecoded.split('/').pop()?.split('%2F').pop();
                         if (targetFilename && currentFilename && targetFilename === currentFilename) return true;
-
                         return false;
                     });
 
                     if (lastSwipedIndex !== -1) {
-                        // Start from the NEXT one
                         finalAssets = finalAssets.slice(lastSwipedIndex + 1);
                     }
                 }
 
-                // 5. Pagination Simulation
-                // usePhotos generally handles "loadMore" by appending.
-                // For folder, to fit "cursor" model without complex re-reads, we might just load ALL (if < 500) or simulate.
-                // If excessively large, we'd need meaningful cursor.
-                // For now: Return ALL valid adjusted assets.
-                setPhotos(finalAssets);
+                const uniqueAssets = finalAssets.filter((a, index, self) =>
+                    index === self.findIndex((t) => t.id === a.id)
+                );
+                setPhotos(uniqueAssets);
                 setHasNextPage(false);
                 setEndCursor(null);
 
             } else {
-                // ALBUM / DEFAULT LOGIC
+                // ALBUM / DEFAULT LOGIC with CREATION TIME support
+
+                // Use Creation Time for Albums
                 const options: MediaLibrary.AssetsOptions = {
-                    first: params.selectionMode === 'manual' ? 500 : 50, // Fetch more if manual to find range
-                    mediaType: 'photo',
-                    sortBy: ['modificationTime'],
+                    first: params.selectionMode === 'manual' ? 1000 : 50, // Increase batch for manual just in case
+                    mediaType: ['photo', 'video'],
+                    sortBy: ['creationTime'],
                     after: cursor || undefined,
                 };
 
@@ -173,15 +178,19 @@ export function usePhotos(params: UsePhotosParams = {}) {
                     options.album = cameraAlbum;
                 }
 
-                // Initialize variable to hold results from either Resume or Standard path
+                // TIME RANGE FILTERING (Manual Mode)
+                if (params.selectionMode === 'manual' && params.minDate && params.maxDate) {
+                    options.createdAfter = params.minDate;
+                    options.createdBefore = params.maxDate;
+                }
+
                 let fetchedAssets: MediaLibrary.Asset[] = [];
 
-                // RESUME LOGIC (Seek and Slice)
                 if (params.selectionMode === 'resume' && params.startAssetId && !cursor) {
                     let currentCursor: string | undefined = undefined;
                     let found = false;
                     let attempts = 0;
-                    const MAX_ATTEMPTS = 10; // Search approx 500-1000 items deep
+                    const MAX_ATTEMPTS = 20;
 
                     while (!found && attempts < MAX_ATTEMPTS) {
                         options.after = currentCursor;
@@ -191,42 +200,25 @@ export function usePhotos(params: UsePhotosParams = {}) {
                         const targetIndex = assetsPage.findIndex(a => a.id === params.startAssetId);
 
                         if (targetIndex !== -1) {
-                            // Found it! Start AFTER this item.
-                            const sliced = assetsPage.slice(targetIndex + 1);
-
-                            // If slice is empty (it was the last item on page), we might need next page immediately
-                            // But usually loadMore handles that. For now, set what we have.
-                            fetchedAssets = sliced;
-
-                            // IMPORTANT: valid "after" cursor for NEXT PAGE is result.endCursor
+                            fetchedAssets = assetsPage.slice(targetIndex + 1);
                             setEndCursor(result.endCursor);
                             setHasNextPage(result.hasNextPage);
 
-                            // If we sliced everything away (last item), trigger a speculative load of next page?
-                            // Let's rely on standard flow: if empty, user sees empty? 
-                            // Better: if sliced is empty and hasNextPage, fetch one more page immediately.
-                            if (sliced.length === 0 && result.hasNextPage) {
+                            if (fetchedAssets.length === 0 && result.hasNextPage) {
                                 const nextResult = await MediaLibrary.getAssetsAsync({ ...options, after: result.endCursor });
                                 fetchedAssets = nextResult.assets;
                                 setEndCursor(nextResult.endCursor);
                                 setHasNextPage(nextResult.hasNextPage);
                             }
-
                             found = true;
                         } else {
-                            // Not in this page. Move to next.
-                            if (!result.hasNextPage) {
-                                break; // End of album, asset not found
-                            }
+                            if (!result.hasNextPage) break;
                             currentCursor = result.endCursor;
                             attempts++;
                         }
                     }
 
                     if (!found) {
-                        // Asset not found (maybe deleted?). Fallback to regular load (Start from top).
-                        // Or show error? Fallback to top is safer UX.
-                        console.log("Resume asset not found, starting over.");
                         options.after = undefined;
                         const result = await MediaLibrary.getAssetsAsync(options);
                         fetchedAssets = result.assets;
@@ -235,41 +227,34 @@ export function usePhotos(params: UsePhotosParams = {}) {
                     }
 
                 } else {
-                    // STANDARD LOAD
+                    // STANDARD or MANUAL (First Page or Paged)
                     const result = await MediaLibrary.getAssetsAsync(options);
                     fetchedAssets = result.assets;
 
-                    if (params.selectionMode === 'manual' && params.startAssetId && params.endAssetId && !cursor) {
-                        // ... (Manual range logic)
-                        const startIndex = fetchedAssets.findIndex(a => a.id === params.startAssetId);
-                        const endIndex = fetchedAssets.findIndex(a => a.id === params.endAssetId);
-                        if (startIndex !== -1 && endIndex !== -1) {
-                            const min = Math.min(startIndex, endIndex);
-                            const max = Math.max(startIndex, endIndex);
-                            fetchedAssets = fetchedAssets.slice(min, max + 1);
-                            setHasNextPage(false);
-                            setEndCursor(null);
-                        }
-                    } else {
-                        setEndCursor(result.endCursor);
-                        setHasNextPage(result.hasNextPage);
-                    }
+                    setEndCursor(result.endCursor);
+                    setHasNextPage(result.hasNextPage);
                 }
 
                 // Apply Favorites Filter (if enabled)
-                // Note: Only works for MediaLibrary assets which have isFavorite property
-                // For folders, we assume false or need checking (usually not available easily)
                 if (shouldHideFavorites) {
                     fetchedAssets = fetchedAssets.filter(a => !(a as any).isFavorite);
-                    // Edge case: If we filtered ALL items in this page, we might show empty. 
-                    // Ideally we'd fetch more recursively, but for simplicity let's stick to this.
-                    // If user has MANY favorites, they might see shorter pages. Safe MVP.
                 }
 
                 if (isRefresh || !cursor) {
-                    setPhotos(fetchedAssets);
+                    // Even if it's a refresh, ensure the batch itself doesn't have duplicates
+                    const uniqueBatch = fetchedAssets.filter((a, index, self) =>
+                        index === self.findIndex((t) => t.id === a.id)
+                    );
+                    setPhotos(uniqueBatch);
                 } else {
-                    setPhotos((prev) => [...prev, ...fetchedAssets]);
+                    setPhotos((prev) => {
+                        // Filter out assets that are already in prev, and also ensure the new batch is unique within itself
+                        const uniqueNew = fetchedAssets.filter((a, index, self) =>
+                            index === self.findIndex((t) => t.id === a.id) &&
+                            !prev.some(p => p.id === a.id)
+                        );
+                        return [...prev, ...uniqueNew];
+                    });
                 }
             }
 
@@ -279,7 +264,17 @@ export function usePhotos(params: UsePhotosParams = {}) {
         } finally {
             setLoading(false);
         }
-    }, [permissionResponse, requestPermission, params.sourceType, params.sourceId, params.selectionMode, params.startAssetId, params.endAssetId]);
+    }, [
+        permissionResponse,
+        requestPermission,
+        params.sourceType,
+        params.sourceId,
+        params.selectionMode,
+        params.startAssetId,
+        params.endAssetId,
+        params.minDate,
+        params.maxDate
+    ]);
 
     const loadMore = useCallback(() => {
         if (!loading && hasNextPage && endCursor) {
@@ -289,9 +284,6 @@ export function usePhotos(params: UsePhotosParams = {}) {
 
     useEffect(() => {
         if (permissionResponse && photos.length === 0 && loading) {
-            // Only fetch initial if we haven't yet or specifically asked. 
-            // The loading check helps avoid double fetch in StrictMode sometimes, 
-            // valid initial state usually loading=true, photos=[]
             fetchPhotos(null, true);
         }
     }, [permissionResponse, fetchPhotos, photos.length, loading]);

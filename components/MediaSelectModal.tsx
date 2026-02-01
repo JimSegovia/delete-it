@@ -2,9 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import * as MediaLibrary from 'expo-media-library';
 import React, { useEffect, useState } from 'react';
-import { BackHandler, Dimensions, FlatList, Image, PanResponder, Pressable, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
-
+import { BackHandler, Dimensions, FlatList, Image, Modal, PanResponder, Pressable, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // Helper to determine num columns based on screen width
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -114,7 +112,7 @@ export default function MediaSelectModal({
                 const params: MediaLibrary.AssetsOptions = {
                     album: albumId,
                     mediaType: ['photo', 'video'],
-                    sortBy: ['modificationTime'],
+                    sortBy: ['creationTime'],
                     first: 50,
                     after: reset ? undefined : endCursor
                 };
@@ -229,89 +227,96 @@ export default function MediaSelectModal({
     if (!isVisible) return null;
 
     return (
-        <Animated.View style={styles.container} entering={FadeIn} exiting={FadeOut}>
-            <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
-            <SafeAreaView style={styles.safeArea}>
+        <Modal
+            visible={isVisible}
+            transparent={true}
+            animationType="fade"
+            statusBarTranslucent={true}
+            onRequestClose={onClose}
+        >
+            <View style={styles.container}>
+                <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+                <SafeAreaView style={styles.safeArea}>
 
-                {/* Header */}
-                <View style={styles.header}>
-                    <View>
-                        <Text style={styles.title}>Seleccionar Rango</Text>
-                        <Text style={styles.subtitle}>
-                            {startAsset && endAsset ? "Rango seleccionado" :
-                                startAsset ? "Toca el final (o confirma)" : "Toca la primera foto"}
-                        </Text>
-                    </View>
-                    <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-                        <Ionicons name="close" size={24} color="#fff" />
-                    </TouchableOpacity>
-                </View>
-
-
-
-
-                {/* Grid */}
-                <FlatList
-                    data={assets}
-                    keyExtractor={(item) => item.id}
-                    numColumns={NUM_COLUMNS}
-                    onEndReached={() => fetchAssets(false)}
-                    onEndReachedThreshold={0.5}
-                    onScroll={(e) => setScrollOffset(e.nativeEvent.contentOffset.y)}
-                    scrollEventThrottle={16}
-                    contentContainerStyle={styles.grid}
-                    renderItem={({ item }) => {
-                        const selected = isSelected(item);
-                        const inRange = isInRange(item);
-
-                        return (
-                            <Pressable onPress={() => handleSelect(item)} style={[styles.item, { width: ITEM_SIZE, height: ITEM_SIZE }]}>
-                                <Image source={{ uri: item.uri }} style={styles.image} resizeMode="cover" />
-                                {(selected || inRange) && (
-                                    <View style={[styles.overlay, inRange && styles.rangeOverlay]}>
-                                        {selected && (
-                                            <View
-                                                style={styles.checkCircle}
-                                                // Attach responder based on if it's start or end
-                                                {...(startAsset?.id === item.id ? startResponder.panHandlers : endResponder.panHandlers)}
-                                            >
-                                                <Ionicons name="checkmark" size={16} color="#fff" />
-                                            </View>
-                                        )}
-                                    </View>
-                                )}
-                            </Pressable>
-                        );
-                    }}
-                />
-
-                {/* Footer Actions */}
-                <View style={styles.footer}>
-                    <View style={styles.selectionInfo}>
-                        <Text style={styles.selectionText}>
-                            {startAsset ? (endAsset ? `${getSelectionCount()} elementos` : "1 elemento") : "Nada seleccionado"}
-                        </Text>
+                    {/* Header */}
+                    <View style={styles.header}>
+                        <View>
+                            <Text style={styles.title}>Seleccionar Rango</Text>
+                            <Text style={styles.subtitle}>
+                                {startAsset && endAsset ? "Rango seleccionado" :
+                                    startAsset ? "Toca el final (o confirma)" : "Toca la primera foto"}
+                            </Text>
+                        </View>
+                        <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+                            <Ionicons name="close" size={24} color="#fff" />
+                        </TouchableOpacity>
                     </View>
 
-                    <TouchableOpacity
-                        style={[styles.confirmBtn, !startAsset && styles.disabledBtn]}
-                        disabled={!startAsset}
-                        onPress={() => onConfirm({ startAsset, endAsset })}
-                    >
-                        <Text style={styles.confirmText}>Confirmar</Text>
-                        <Ionicons name="checkmark-circle" size={20} color="#fff" style={{ marginLeft: 8 }} />
-                    </TouchableOpacity>
-                </View>
 
-            </SafeAreaView>
-        </Animated.View>
+
+
+                    {/* Grid */}
+                    <FlatList
+                        data={assets}
+                        keyExtractor={(item) => item.id}
+                        numColumns={NUM_COLUMNS}
+                        onEndReached={() => fetchAssets(false)}
+                        onEndReachedThreshold={0.5}
+                        onScroll={(e) => setScrollOffset(e.nativeEvent.contentOffset.y)}
+                        scrollEventThrottle={16}
+                        contentContainerStyle={styles.grid}
+                        renderItem={({ item }) => {
+                            const selected = isSelected(item);
+                            const inRange = isInRange(item);
+
+                            return (
+                                <Pressable onPress={() => handleSelect(item)} style={[styles.item, { width: ITEM_SIZE, height: ITEM_SIZE }]}>
+                                    <Image source={{ uri: item.uri }} style={styles.image} resizeMode="cover" />
+                                    {(selected || inRange) && (
+                                        <View style={[styles.overlay, inRange && styles.rangeOverlay]}>
+                                            {selected && (
+                                                <View
+                                                    style={styles.checkCircle}
+                                                    // Attach responder based on if it's start or end
+                                                    {...(startAsset?.id === item.id ? startResponder.panHandlers : endResponder.panHandlers)}
+                                                >
+                                                    <Ionicons name="checkmark" size={16} color="#fff" />
+                                                </View>
+                                            )}
+                                        </View>
+                                    )}
+                                </Pressable>
+                            );
+                        }}
+                    />
+
+                    {/* Footer Actions */}
+                    <View style={styles.footer}>
+                        <View style={styles.selectionInfo}>
+                            <Text style={styles.selectionText}>
+                                {startAsset ? (endAsset ? `${getSelectionCount()} elementos` : "1 elemento") : "Nada seleccionado"}
+                            </Text>
+                        </View>
+
+                        <TouchableOpacity
+                            style={[styles.confirmBtn, !startAsset && styles.disabledBtn]}
+                            disabled={!startAsset}
+                            onPress={() => onConfirm({ startAsset, endAsset })}
+                        >
+                            <Text style={styles.confirmText}>Confirmar</Text>
+                            <Ionicons name="checkmark-circle" size={20} color="#fff" style={{ marginLeft: 8 }} />
+                        </TouchableOpacity>
+                    </View>
+
+                </SafeAreaView>
+            </View>
+        </Modal>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         ...StyleSheet.absoluteFillObject,
-        zIndex: 5000,
         backgroundColor: 'rgba(0,0,0,0.85)',
     },
     safeArea: {

@@ -11,6 +11,9 @@ import Animated, {
     withSpring,
     withTiming
 } from 'react-native-reanimated';
+import { ThemeColors } from '../../constants/Colors';
+import { Language, translations } from '../../constants/Translations';
+import { useThemeColor } from '../../hooks/useThemeColor';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -19,9 +22,10 @@ const COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'
 
 interface ConfettiPieceProps {
     index: number;
+    styles: any;
 }
 
-const ConfettiPiece: React.FC<ConfettiPieceProps> = ({ index }) => {
+const ConfettiPiece: React.FC<ConfettiPieceProps> = ({ index, styles }) => {
     const startX = Math.random() * SCREEN_WIDTH;
 
     // stable shared values
@@ -30,17 +34,15 @@ const ConfettiPiece: React.FC<ConfettiPieceProps> = ({ index }) => {
     const opacity = useSharedValue(1);
 
     useEffect(() => {
-        // const startY = translateY.value; // Store initial value if needed, or just use logic
         const endY = SCREEN_HEIGHT + Math.random() * 200;
         const rotationOffset = Math.random() * 360;
-
         const delay = Math.random() * 1000;
         const duration = 2000 + Math.random() * 1000;
 
         translateY.value = withDelay(delay, withTiming(endY, { duration, easing: Easing.out(Easing.quad) }));
         rotate.value = withDelay(delay, withTiming(rotationOffset + 720, { duration }));
         opacity.value = withDelay(delay + duration - 500, withTiming(0, { duration: 500 }));
-    }, []); // Empty deps because we want this to run once on mount with random values calculated INSIDE
+    }, [translateY, rotate, opacity]);
 
     const style = useAnimatedStyle(() => ({
         transform: [
@@ -52,16 +54,21 @@ const ConfettiPiece: React.FC<ConfettiPieceProps> = ({ index }) => {
         backgroundColor: COLORS[index % COLORS.length],
     }));
 
+    // In ConfettiPiece, styles are passed as props
     return <Animated.View style={[styles.confetti, style]} />;
 };
 
-const AnimatedTrashCan = () => {
+const AnimatedTrashCan = ({ colors }: { colors: ThemeColors }) => {
     const rotation = useSharedValue(0);
     const scale = useSharedValue(0);
 
     useEffect(() => {
         // Pop in
-        scale.value = withSpring(1, { damping: 12 });
+        scale.value = withSpring(1, { damping: 12 }, (finished) => {
+            if (finished) {
+                // ...
+            }
+        });
 
         // Wiggle loop
         rotation.value = withRepeat(
@@ -71,12 +78,12 @@ const AnimatedTrashCan = () => {
                 withTiming(-10, { duration: 100 }),
                 withTiming(10, { duration: 100 }),
                 withTiming(0, { duration: 100 }),
-                withDelay(1000, withTiming(0, { duration: 0 })) // Pause
+                withDelay(1000, withTiming(0, { duration: 0 }))
             ),
-            -1, // Infinite
+            -1,
             false
         );
-    }, []);
+    }, [scale, rotation]);
 
     const style = useAnimatedStyle(() => ({
         transform: [
@@ -87,47 +94,49 @@ const AnimatedTrashCan = () => {
 
     return (
         <Animated.View style={style}>
-            <Ionicons name="trash" size={100} color="#ef4444" />
+            <Ionicons name="trash" size={100} color={colors.accent} />
         </Animated.View>
     );
 };
 
-export default function CompletionView({ onFinish }: { onFinish: () => void }) {
-    // const router = useRouter(); // Unused
+export default function CompletionView({ onFinish, language }: { onFinish: () => void, language: Language }) {
+    const colors = useThemeColor();
+    const styles = React.useMemo(() => createStyles(colors), [colors]);
 
     useEffect(() => {
-        // ...
         const timer = setTimeout(() => {
             // onFinish();
         }, 5000);
         return () => clearTimeout(timer);
     }, []);
 
+    const t = translations[language].swipe;
+
     return (
         <View style={styles.container}>
             {Array.from({ length: CONFETTI_COUNT }).map((_, i) => (
-                <ConfettiPiece key={i} index={i} />
+                <ConfettiPiece key={i} index={i} styles={styles} />
             ))}
 
             <View style={styles.content}>
-                <AnimatedTrashCan />
-                <Text style={styles.title}>¡Limpieza Completada!</Text>
+                <AnimatedTrashCan colors={colors} />
+                <Text style={styles.title}>{t.completion}</Text>
 
                 <TouchableOpacity
                     style={styles.button}
                     onPress={onFinish}
                 >
-                    <Text style={styles.buttonText}>Volver al Menú Principal</Text>
+                    <Text style={styles.buttonText}>{t.backToMenu}</Text>
                 </TouchableOpacity>
             </View>
         </View>
     );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
     container: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: '#110F18', // Consistent dark theme
+        backgroundColor: colors.background,
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 50,
@@ -147,12 +156,12 @@ const styles = StyleSheet.create({
     title: {
         fontSize: 28,
         fontWeight: 'bold',
-        color: '#fff',
+        color: colors.text,
         marginTop: 20,
         marginBottom: 40,
     },
     button: {
-        backgroundColor: '#a855f7',
+        backgroundColor: colors.accent,
         paddingHorizontal: 30,
         paddingVertical: 15,
         borderRadius: 25,

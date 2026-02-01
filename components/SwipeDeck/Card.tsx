@@ -1,22 +1,29 @@
 import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { Dimensions, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Extrapolation,
     interpolate,
+    interpolateColor,
     runOnJS,
     useAnimatedStyle,
     useSharedValue,
     withSpring
 } from 'react-native-reanimated';
+
+import { ThemeColors } from '../../constants/Colors';
+import { Language } from '../../constants/Translations';
 import { PhotoAsset } from '../../hooks/usePhotos';
+import { useThemeColor } from '../../hooks/useThemeColor';
+import { FilePreview } from './FilePreview';
 
 
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
 
 export interface SwipeCardRef {
@@ -34,13 +41,16 @@ interface SwipeCardProps {
     autoSwipe?: 'left' | 'right';
     initialTranslateX?: number;
     initialVelocity?: number;
+    language: Language;
 }
 
 const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
-    ({ asset, onSwipeLeft, onSwipeRight, isTop, isZoomMode, startFromLeft, autoSwipe, initialTranslateX, initialVelocity }, ref) => {
+    ({ asset, onSwipeLeft, onSwipeRight, isTop, isZoomMode, startFromLeft, autoSwipe, initialTranslateX, initialVelocity, language }, ref) => {
         // Swipe State
         const translateX = useSharedValue(initialTranslateX ?? (startFromLeft ? -SCREEN_WIDTH * 1.5 : 0));
         const translateY = useSharedValue(0);
+        const colors = useThemeColor();
+        const styles = React.useMemo(() => createStyles(colors), [colors]);
 
         // Zoom State
         const scale = useSharedValue(1);
@@ -54,7 +64,44 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
 
         // State to track if we are currently animating in from an undo
         const isRestoring = useSharedValue(!!startFromLeft);
+
+        // Track zoom state for gesture enabling without reading shared value in render
         const [fileInfo, setFileInfo] = useState<{ size: string; date: string } | null>(null);
+
+        // Determine Render Type
+        const renderType = useMemo(() => {
+            if (asset.mediaType === 'video') return 'video';
+            if (asset.mediaType === 'unknown' || (asset.uri && /\.(pdf|doc|docx|xls|xlsx)$/i.test(asset.uri))) return 'file';
+            return 'image';
+        }, [asset]);
+
+
+
+        // Video Player Setup (expo-video)
+        // Note: useVideoPlayer is stable
+        const player = useVideoPlayer(asset.uri, (player) => {
+            player.loop = true;
+            player.muted = true;
+            // Initial state based on whether we are top card
+            if (isTop && !autoSwipe) {
+                player.play();
+            } else {
+                player.pause();
+            }
+        });
+
+        // Effect to control play/pause based on props (Top Card)
+        // Effect to control play/pause based on props (Top Card)
+        useEffect(() => {
+            if (!player) return;
+            try {
+                if (isTop && !autoSwipe) {
+                    player.play();
+                } else {
+                    player.pause();
+                }
+            } catch (e) { console.log("Player effect error", e); }
+        }, [isTop, autoSwipe, player]);
 
         useEffect(() => {
             // OPTIMIZATION: Don't fetch info for ghost cards (they are just animating out)
@@ -97,7 +144,7 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
                     if (!isMounted) return;
 
                     const sizeMB = (sizeBytes / (1024 * 1024)).toFixed(1);
-                    const dateStr = date.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                    const dateStr = date.toLocaleDateString(language === 'es' ? 'es-ES' : 'en-US', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
                     setFileInfo({
                         size: sizeBytes > 0 ? `${sizeMB} MB` : '',
@@ -109,7 +156,7 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
             };
             fetchInfo();
             return () => { isMounted = false; };
-        }, [asset, autoSwipe]); // Added asset dependency, kept autoSwipe
+        }, [asset, autoSwipe, language]);
 
         React.useEffect(() => {
             if (startFromLeft) {
@@ -141,6 +188,20 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
             }
         }, [startFromLeft, translateX, translateY, isRestoring, autoSwipe, initialVelocity, onSwipeLeft, onSwipeRight, asset]);
 
+        // Reset zoom when mode is disabled
+        useEffect(() => {
+            if (!isZoomMode) {
+                scale.value = withSpring(1);
+                focalX.value = withSpring(0);
+                focalY.value = withSpring(0);
+                zoomTranslateX.value = withSpring(0);
+                zoomTranslateY.value = withSpring(0);
+                savedScale.value = 1;
+                savedZoomTx.value = 0;
+                savedZoomTy.value = 0;
+            }
+        }, [isZoomMode, scale, focalX, focalY, zoomTranslateX, zoomTranslateY, savedScale, savedZoomTx, savedZoomTy]);
+
         const swipeLeft = useCallback((velocity?: number, translation?: number) => {
             'worklet';
             runOnJS(onSwipeLeft)(asset, velocity, translation);
@@ -156,12 +217,65 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
             swipeRight,
         }));
 
+        // Video Player Ref to avoid Reanimated trying to serialize the player object
+        const playerRef = React.useRef(player);
+        useEffect(() => {
+            playerRef.current = player;
+        }, [player]);
+
+        // 4. Tap Gesture (Video Only)
+        // Enable Tap logic for Video
+        const togglePlayback = useCallback(() => {
+            const p = playerRef.current;
+            if (p) {
+                try {
+                    if (p.playing) {
+                        p.pause();
+                    } else {
+                        p.play();
+                    }
+                } catch (e) {
+                    console.log("Error toggling playback", e);
+                }
+            }
+        }, []);
+
+        const pauseVideo = useCallback(() => {
+            const p = playerRef.current;
+            if (p) {
+                try {
+                    if (p.playing) p.pause();
+                } catch (e) { console.log("Error pausing video", e); }
+            }
+        }, []);
+
+        const playVideo = useCallback(() => {
+            const p = playerRef.current;
+            if (p) {
+                try {
+                    if (!p.playing) p.play();
+                } catch (e) { console.log("Error playing video", e); }
+            }
+        }, []);
+
+        const tapGesture = useMemo(() => Gesture.Tap()
+            .enabled(isTop && renderType === 'video')
+            .onEnd(() => {
+                runOnJS(togglePlayback)();
+            }), [isTop, renderType, togglePlayback]);
+
         // --- GESTURES ---
 
         // 1. Swipe Gesture (Normal Mode)
         const swipeGesture = useMemo(() => Gesture.Pan()
             .enabled(isTop && !isZoomMode)
+            .activeOffsetX([-20, 20])
             .maxPointers(1) // Avoid conflict with pinch
+            .onStart(() => {
+                if (renderType === 'video') {
+                    runOnJS(pauseVideo)();
+                }
+            })
             .onUpdate((event) => {
                 translateX.value = event.translationX;
                 translateY.value = event.translationY;
@@ -176,13 +290,48 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
                 } else {
                     translateX.value = withSpring(0);
                     translateY.value = withSpring(0);
+                    // Resume video if swipe cancelled
+                    if (renderType === 'video') {
+                        runOnJS(playVideo)();
+                    }
                 }
-            }), [isTop, isZoomMode, translateX, translateY, swipeLeft, swipeRight]);
+            }), [isTop, isZoomMode, translateX, translateY, swipeLeft, swipeRight, renderType, pauseVideo, playVideo]);
 
-        // 2. Zoom Pan Gesture (Zoom Mode)
+        // 2. Pinch Gesture (Zoom)
+        const pinchGesture = useMemo(() => Gesture.Pinch()
+            .enabled(isTop)
+            .onStart((event) => {
+                if (renderType === 'video') runOnJS(pauseVideo)();
+                savedScale.value = scale.value;
+                focalX.value = event.focalX - SCREEN_WIDTH / 2;
+                focalY.value = event.focalY - SCREEN_HEIGHT / 2;
+            })
+            .onUpdate((event) => {
+                scale.value = savedScale.value * event.scale;
+            })
+            .onEnd(() => {
+                // Return to default if zoomed out OR if we are not in persistent zoom mode
+                if (scale.value < 1 || !isZoomMode) {
+                    scale.value = withSpring(1);
+                    focalX.value = withSpring(0);
+                    focalY.value = withSpring(0);
+                    zoomTranslateX.value = withSpring(0);
+                    zoomTranslateY.value = withSpring(0);
+                } else {
+                    savedScale.value = scale.value;
+                }
+            }), [isTop, isZoomMode, renderType, pauseVideo, scale, savedScale, focalX, focalY, zoomTranslateX, zoomTranslateY]);
+
+        // 3. Pan Gesture (Zoom Mode)
+        // Only active when we are in explicit zoom mode
         const zoomPanGesture = useMemo(() => Gesture.Pan()
             .enabled(isTop && isZoomMode)
             .averageTouches(true)
+            .minPointers(1)
+            .onStart(() => {
+                savedZoomTx.value = zoomTranslateX.value;
+                savedZoomTy.value = zoomTranslateY.value;
+            })
             .onUpdate((event) => {
                 zoomTranslateX.value = savedZoomTx.value + event.translationX;
                 zoomTranslateY.value = savedZoomTy.value + event.translationY;
@@ -190,47 +339,30 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
             .onEnd(() => {
                 savedZoomTx.value = zoomTranslateX.value;
                 savedZoomTy.value = zoomTranslateY.value;
-            }), [isTop, isZoomMode, zoomTranslateX, zoomTranslateY, savedZoomTx, savedZoomTy]);
-
-        // 3. Pinch Gesture (Both Modes)
-        const pinchGesture = useMemo(() => Gesture.Pinch()
-            .enabled(isTop)
-            .onUpdate((event) => {
-                scale.value = savedScale.value * event.scale;
-                focalX.value = event.focalX;
-                focalY.value = event.focalY;
-            })
-            .onEnd(() => {
-                if (isZoomMode) {
-                    if (scale.value < 1) {
-                        scale.value = withSpring(1);
-                        savedScale.value = 1;
-                    } else {
-                        savedScale.value = scale.value;
-                    }
-                } else {
-                    // Normal mode: Revert on release
-                    scale.value = withSpring(1);
-                }
-            }), [isTop, isZoomMode, scale, savedScale, focalX, focalY]);
-
-        // Reset zoom when mode changes
-        React.useEffect(() => {
-            if (!isZoomMode) {
-                scale.value = withSpring(1);
-                zoomTranslateX.value = withSpring(0);
-                zoomTranslateY.value = withSpring(0);
-                savedScale.value = 1;
-                savedZoomTx.value = 0;
-                savedZoomTy.value = 0;
-            }
-        }, [isZoomMode, scale, zoomTranslateX, zoomTranslateY, savedScale, savedZoomTx, savedZoomTy]);
+            }), [isTop, isZoomMode, scale, zoomTranslateX, zoomTranslateY, savedZoomTx, savedZoomTy]);
 
         // Combine gestures
-        const composedGesture = useMemo(() => Gesture.Simultaneous(
-            pinchGesture,
-            Gesture.Race(zoomPanGesture, swipeGesture)
-        ), [pinchGesture, zoomPanGesture, swipeGesture]);
+        const composedGesture = useMemo(() => {
+            if (renderType === 'video') {
+                return Gesture.Simultaneous(swipeGesture, tapGesture);
+            }
+
+            // Priority: Pinch > ZoomPan > Swipe
+            // If we are pinching, we want pinch.
+            // If we are zoomed in, we want panning.
+            // If we are default, we want swipe.
+
+            // However, Gesture.Race can vary.
+            // Let's use Simultaneous for pinch to coexist with others if needed, 
+            // but for single touch, we need swipe vs zoomPan.
+
+            const nativePan = Gesture.Simultaneous(pinchGesture, zoomPanGesture);
+
+            // If in Zoom Mode, Swipe should be disabled physically in its definition
+            // but we can also handle it here.
+
+            return Gesture.Simultaneous(nativePan, swipeGesture);
+        }, [pinchGesture, zoomPanGesture, swipeGesture, tapGesture, renderType]);
 
         // --- STYLES ---
 
@@ -286,9 +418,15 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
                 };
             }
 
+            const backgroundColor = interpolateColor(
+                translateX.value,
+                [-SCREEN_WIDTH / 4, 0, SCREEN_WIDTH / 4],
+                ['#f87171', 'transparent', '#4ade80']
+            );
+
             return {
                 flex: 1,
-                backgroundColor: translateX.value > 0 ? '#4ade80' : '#f87171',
+                backgroundColor,
                 opacity: Math.abs(translateX.value) > 20 ? Math.max(opacityRight, opacityLeft) : 0,
             };
         });
@@ -296,12 +434,31 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
         return (
             <GestureDetector gesture={composedGesture}>
                 <Animated.View style={[styles.card, animatedStyle]}>
-                    <Image
-                        source={{ uri: asset.uri }}
-                        style={styles.image}
-                        contentFit="cover"
-                        cachePolicy="disk"
-                    />
+                    {renderType === 'image' && (
+                        <Image
+                            source={{ uri: asset.uri }}
+                            style={styles.image}
+                            contentFit="cover"
+                            cachePolicy="disk"
+                        />
+                    )}
+
+                    {renderType === 'video' && player && (
+                        <VideoView
+                            player={player}
+                            style={[styles.image, { borderRadius: 20 }]} // Explicit border radius for Android clipping
+                            contentFit="cover"
+                            nativeControls={false}
+                        />
+                    )}
+
+                    {renderType === 'file' && (
+                        <FilePreview
+                            uri={asset.uri}
+                            extension={asset.uri.split('.').pop() || ''}
+                            colors={colors}
+                        />
+                    )}
                     {fileInfo && (
                         <View style={styles.infoOverlay}>
                             <View style={styles.infoContainer}>
@@ -322,29 +479,42 @@ SwipeCardComponent.displayName = 'SwipeCard';
 
 export const SwipeCard = React.memo(SwipeCardComponent);
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
     card: {
         position: 'absolute',
         width: '100%',
         height: '100%',
         borderRadius: 20,
-        backgroundColor: '#fff',
-        // overflow: 'hidden', // Removing this to allow zoom to overflow if needed, but we lose rounded corners on zoom. 
-        // Actually, let's keep it hidden for now as "zooming the whole card" usually means the *image* zooms within the frame, or the frame scales.
-        // If the user said "se hace zoom de toda la carta" (zoom is made of the whole card - negative), maybe they want the card to scale? 
-        // But "ZoomableImage" scales the image. 
-        // Let's stick to maxPointers first.
+        backgroundColor: colors.card,
         overflow: 'hidden',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.25,
         shadowRadius: 3.84,
         elevation: 5,
+        borderWidth: 1,
+        borderColor: colors.cardBorder,
     },
     image: {
         flex: 1,
         width: '100%',
         height: '100%',
+    },
+    fileContainer: {
+        flex: 1,
+        width: '100%',
+        height: '100%',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 40,
+        backgroundColor: colors.card, // Already set on container, but ensuring contrast
+    },
+    fileName: {
+        marginTop: 20,
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: colors.text,
+        textAlign: 'center',
     },
     infoOverlay: {
         position: 'absolute',
@@ -356,17 +526,14 @@ const styles = StyleSheet.create({
         zIndex: 20,
     },
     infoContainer: {
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        backgroundColor: colors.overlay,
         paddingHorizontal: 12,
         paddingVertical: 6,
         borderRadius: 8,
     },
     infoText: {
-        color: '#fff',
+        color: colors.text,
         fontSize: 14,
         fontWeight: '500',
-        textShadowColor: 'rgba(0, 0, 0, 0.75)',
-        textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 3,
     },
 });

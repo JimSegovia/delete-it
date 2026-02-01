@@ -2,26 +2,32 @@
   "expo": {
     "name": "Delete It!",
     "slug": "delete-it",
-    "version": "1.0.0",
+    "version": "0.9.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "deleteit",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "package": "com.jimsegovia.deleteit",
+      "versionCode": 6,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#110F18"
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
-        "ACCESS_MEDIA_LOCATION"
+        "ACCESS_MEDIA_LOCATION",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ],
+      "blockedPermissions": [
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ]
     },
     "web": {
@@ -37,7 +43,7 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#110F18"
         }
       ],
       [
@@ -47,10 +53,18 @@
           "savePhotosPermission": "Permite a DeleteIt guardar o mover fotos.",
           "isStandard": true
         }
-      ]
+      ],
+      "expo-localization",
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "de9d2a17-347f-4485-b8b8-bbe511b6680c"
+      }
     }
   }
 }

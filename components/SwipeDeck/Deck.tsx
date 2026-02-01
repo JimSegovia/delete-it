@@ -1,5 +1,6 @@
 import React, { useCallback, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { Language } from '../../constants/Translations';
 import { PhotoAsset } from '../../hooks/usePhotos';
 import { SwipeCard, SwipeCardRef } from './Card';
 
@@ -15,10 +16,11 @@ interface SwipeDeckProps {
     onSwipeRight: (asset: PhotoAsset) => void;
     onEmpty?: () => void;
     isZoomMode: boolean;
+    language: Language;
 }
 
 export const SwipeDeck = React.forwardRef<SwipeDeckRef, SwipeDeckProps>(
-    ({ assets, onSwipeLeft, onSwipeRight, onEmpty, isZoomMode }, ref) => {
+    ({ assets, onSwipeLeft, onSwipeRight, onEmpty, isZoomMode, language }, ref) => {
         const [currentIndex, setCurrentIndex] = useState(0);
         const [isUndo, setIsUndo] = useState(false);
         const [ghosts, setGhosts] = useState<{
@@ -142,6 +144,7 @@ export const SwipeDeck = React.forwardRef<SwipeDeckRef, SwipeDeckProps>(
                         isZoomMode={isZoomMode}
                         ref={isTop ? topCardRef : null}
                         startFromLeft={isTop && isUndo}
+                        language={language}
                     />
                 );
             });
@@ -149,7 +152,7 @@ export const SwipeDeck = React.forwardRef<SwipeDeckRef, SwipeDeckProps>(
             // Render ghosts
             const ghostCards = ghosts.map((ghost) => (
                 <SwipeCard
-                    key={ghost.id}
+                    key={`ghost-${ghost.id}-${ghost.direction}`}
                     asset={ghost.asset}
                     onSwipeLeft={() => removeGhost(ghost.id)}
                     onSwipeRight={() => removeGhost(ghost.id)}
@@ -158,11 +161,12 @@ export const SwipeDeck = React.forwardRef<SwipeDeckRef, SwipeDeckProps>(
                     autoSwipe={ghost.direction}
                     initialTranslateX={ghost.initialTranslateX}
                     initialVelocity={ghost.initialVelocity}
+                    language={language}
                 />
             ));
 
             return [...activeCards, ...ghostCards];
-        }, [assets, currentIndex, handleSwipeLeft, handleSwipeRight, isZoomMode, isUndo, ghosts, removeGhost]);
+        }, [assets, currentIndex, handleSwipeLeft, handleSwipeRight, isZoomMode, isUndo, ghosts, removeGhost, language]);
 
         return (
             <View style={styles.container} pointerEvents="box-none">

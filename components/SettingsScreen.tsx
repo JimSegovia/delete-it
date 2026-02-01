@@ -1,18 +1,34 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
+import { useColorScheme } from 'nativewind';
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { Linking, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { ThemeColors } from '../constants/Colors';
+import { Language, translations } from '../constants/Translations';
+import { useThemeColor } from '../hooks/useThemeColor';
 
-export default function SettingsScreen() {
+interface SettingsScreenProps {
+    language?: Language;
+    onLanguageChange?: (lang: Language) => void;
+}
+
+export default function SettingsScreen({ language, onLanguageChange }: SettingsScreenProps) {
     // State for toggles
     const [moveToTrash, setMoveToTrash] = useState(true);
     const [hideFavorites, setHideFavorites] = useState(true);
     const [immediateDeletion, setImmediateDeletion] = useState(true);
     const [vibration, setVibration] = useState(true);
     const [sounds, setSounds] = useState(true);
-    const [theme, setTheme] = useState<'automatic' | 'light' | 'dark'>('dark');
-    const [language, setLanguage] = useState<'es' | 'en'>('es');
+    const { setColorScheme } = useColorScheme();
+    const [themeSelection, setThemeSelection] = useState<'automatic' | 'light' | 'dark'>('dark');
+
+    // Use the passed language prop. If strictly undefined, fallback to 'es', but it should be passed.
+    const currentLang = language || 'es';
+    const t = translations[currentLang].settings;
+
+    const colors = useThemeColor();
+    const styles = React.useMemo(() => createStyles(colors), [colors]);
 
     // Load settings on mount
     React.useEffect(() => {
@@ -32,13 +48,27 @@ export default function SettingsScreen() {
 
                 const soundMode = await AsyncStorage.getItem('deleteit_sound');
                 if (soundMode !== null) setSounds(soundMode === 'true');
-            } catch (e) {
-                console.error("Failed to load settings", e);
+
+                const savedTheme = await AsyncStorage.getItem('deleteit_theme') as 'automatic' | 'light' | 'dark' | null;
+                if (savedTheme) {
+                    setThemeSelection(savedTheme);
+                    if (savedTheme === 'automatic') {
+                        setColorScheme('system');
+                    } else {
+                        setColorScheme(savedTheme);
+                    }
+                } else {
+                    setThemeSelection('dark');
+                    setColorScheme('dark');
+                }
+
+                // Language is now handled by the hook
+            } catch (error) {
+                console.error("Failed to load settings", error);
             }
         };
-        // Small delay to ensure render cycle catches up or just avoids flickering too fast
         loadSettings();
-    }, []);
+    }, [setColorScheme]);
 
     const toggleMoveToTrash = async (value: boolean) => {
         setMoveToTrash(value);
@@ -48,8 +78,6 @@ export default function SettingsScreen() {
     const toggleHideFavorites = async (value: boolean) => {
         setHideFavorites(value);
         await AsyncStorage.setItem('deleteit_hideFavorites', String(value));
-        // We might need to trigger a refresh in usePhotos if it's listening, 
-        // but typically a restart of the session handles it.
     };
 
     const toggleImmediateDeletion = async (value: boolean) => {
@@ -57,130 +85,141 @@ export default function SettingsScreen() {
         await AsyncStorage.setItem('deleteit_immediateDeletion', String(value));
     };
 
+    const handleThemeChange = async (newTheme: 'automatic' | 'light' | 'dark') => {
+        setThemeSelection(newTheme);
+        if (newTheme === 'automatic') {
+            setColorScheme('system');
+        } else {
+            setColorScheme(newTheme);
+        }
+        await AsyncStorage.setItem('deleteit_theme', newTheme);
+    };
 
 
-    const router = useRouter(); // Hook
+    const router = useRouter();
 
     return (
-        <View style={styles.container}>
-            <Text style={styles.screenTitle}>Ajustes</Text>
+        <View style={[styles.container, { backgroundColor: colors.background }]}>
+            <Text style={[styles.screenTitle, { color: colors.text }]}>{t.title}</Text>
 
             <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
 
                 {/* APARIENCIA SECTION */}
-                <Text style={styles.sectionHeader}>APARIENCIA</Text>
-                <View style={styles.sectionContainer}>
+                <Text style={styles.sectionHeader}>{t.appearance}</Text>
+                <View style={[styles.sectionContainer, { backgroundColor: colors.card }]}>
                     {[
-                        { label: 'Automático', value: 'automatic', icon: 'contrast-outline' },
-                        { label: 'Claro', value: 'light', icon: 'sunny-outline' },
-                        { label: 'Oscuro', value: 'dark', icon: 'moon-outline' },
+                        { label: t.automatic, value: 'automatic', icon: 'contrast-outline' },
+                        { label: t.light, value: 'light', icon: 'sunny-outline' },
+                        { label: t.dark, value: 'dark', icon: 'moon-outline' },
                     ].map((item, index, arr) => (
                         <React.Fragment key={item.value}>
                             <TouchableOpacity
                                 style={styles.row}
-                                onPress={() => setTheme(item.value as any)}
+                                onPress={() => handleThemeChange(item.value as any)}
                                 activeOpacity={0.7}
                             >
                                 <View style={styles.iconContainer}>
-                                    <Ionicons name={item.icon as any} size={22} color="#9ca3af" />
+                                    <Ionicons name={item.icon as any} size={22} color={colors.icon} />
                                 </View>
                                 <View style={styles.rowTextContent}>
-                                    <Text style={styles.rowTitle}>{item.label}</Text>
+                                    <Text style={[styles.rowTitle, { color: colors.text }]}>{item.label}</Text>
                                 </View>
-                                {theme === item.value && (
-                                    <Ionicons name="checkmark" size={20} color="#c026d3" />
+                                {themeSelection === item.value && (
+                                    <Ionicons name="checkmark" size={20} color={colors.accent} />
                                 )}
                             </TouchableOpacity>
-                            {index < arr.length - 1 && <View style={styles.separator} />}
+                            {index < arr.length - 1 && <View style={[styles.separator, { backgroundColor: colors.separator }]} />}
                         </React.Fragment>
                     ))}
                 </View>
 
                 {/* IDIOMA SECTION */}
-                <Text style={styles.sectionHeader}>IDIOMA</Text>
-                <View style={styles.sectionContainer}>
+                <Text style={styles.sectionHeader}>{t.language}</Text>
+                <View style={[styles.sectionContainer, { backgroundColor: colors.card }]}>
                     {[
-                        { label: 'Español', value: 'es', icon: 'language-outline' },
-                        { label: 'English', value: 'en', icon: 'earth-outline' },
+                        { label: t.spanish, value: 'es', icon: 'language-outline' },
+                        { label: t.english, value: 'en', icon: 'earth-outline' },
                     ].map((item, index, arr) => (
                         <React.Fragment key={item.value}>
                             <TouchableOpacity
                                 style={styles.row}
-                                onPress={() => setLanguage(item.value as any)}
+                                onPress={() => {
+                                    if (onLanguageChange) onLanguageChange(item.value as any);
+                                }}
                                 activeOpacity={0.7}
                             >
                                 <View style={styles.iconContainer}>
-                                    <Ionicons name={item.icon as any} size={22} color="#9ca3af" />
+                                    <Ionicons name={item.icon as any} size={22} color={colors.icon} />
                                 </View>
                                 <View style={styles.rowTextContent}>
-                                    <Text style={styles.rowTitle}>{item.label}</Text>
+                                    <Text style={[styles.rowTitle, { color: colors.text }]}>{item.label}</Text>
                                 </View>
                                 {language === item.value && (
-                                    <Ionicons name="checkmark" size={20} color="#c026d3" />
+                                    <Ionicons name="checkmark" size={20} color={colors.accent} />
                                 )}
                             </TouchableOpacity>
-                            {index < arr.length - 1 && <View style={styles.separator} />}
+                            {index < arr.length - 1 && <View style={[styles.separator, { backgroundColor: colors.separator }]} />}
                         </React.Fragment>
                     ))}
                 </View>
 
                 {/* SEGURIDAD SECTION */}
-                <Text style={styles.sectionHeader}>SEGURIDAD</Text>
-                <View style={styles.sectionContainer}>
+                <Text style={styles.sectionHeader}>{t.security}</Text>
+                <View style={[styles.sectionContainer, { backgroundColor: colors.card }]}>
 
                     <View style={styles.row}>
                         <View style={styles.iconContainer}>
-                            <Ionicons name="flash-outline" size={22} color="#9ca3af" />
+                            <Ionicons name="flash-outline" size={22} color={colors.icon} />
                         </View>
                         <View style={styles.rowTextContent}>
-                            <Text style={styles.rowTitle}>Eliminación Inmediata</Text>
+                            <Text style={[styles.rowTitle, { color: colors.text }]}>{t.immediateDeletion}</Text>
                             <Text style={styles.rowSubtitle}>
                                 {immediateDeletion
-                                    ? "Borrar al deslizar"
-                                    : "Borrar al finalizar sesión"}
+                                    ? t.immediateDeletionSubOn
+                                    : t.immediateDeletionSubOff}
                             </Text>
                         </View>
                         <Switch
-                            trackColor={{ false: '#3f3f46', true: '#c026d3' }}
+                            trackColor={{ false: '#3f3f46', true: colors.accent }}
                             thumbColor={'#fff'}
                             onValueChange={toggleImmediateDeletion}
                             value={immediateDeletion}
                         />
                     </View>
 
-                    <View style={styles.separator} />
+                    <View style={[styles.separator, { backgroundColor: colors.separator }]} />
 
                     <View style={styles.row}>
                         <View style={styles.iconContainer}>
-                            <Ionicons name="trash-outline" size={22} color="#9ca3af" />
+                            <Ionicons name="trash-outline" size={22} color={colors.icon} />
                         </View>
                         <View style={styles.rowTextContent}>
-                            <Text style={styles.rowTitle}>Mover a Papelera</Text>
+                            <Text style={[styles.rowTitle, { color: colors.text }]}>{t.moveToTrash}</Text>
                             <Text style={styles.rowSubtitle}>
                                 {moveToTrash
-                                    ? "Los elementos se borran tras 30 días"
-                                    : "Las fotos se eliminarán permanentemente"}
+                                    ? t.moveToTrashSubOn
+                                    : t.moveToTrashSubOff}
                             </Text>
                         </View>
                         <Switch
-                            trackColor={{ false: '#3f3f46', true: '#c026d3' }} // Lila for ON
+                            trackColor={{ false: '#3f3f46', true: colors.accent }}
                             thumbColor={'#fff'}
                             onValueChange={toggleMoveToTrash}
                             value={moveToTrash}
                         />
                     </View>
 
-                    <View style={styles.separator} />
+                    <View style={[styles.separator, { backgroundColor: colors.separator }]} />
 
                     <View style={styles.row}>
                         <View style={styles.iconContainer}>
-                            <Ionicons name="eye-off-outline" size={22} color="#9ca3af" />
+                            <Ionicons name="eye-off-outline" size={22} color={colors.icon} />
                         </View>
                         <View style={styles.rowTextContent}>
-                            <Text style={styles.rowTitle}>Ocultar Favoritos</Text>
+                            <Text style={[styles.rowTitle, { color: colors.text }]}>{t.hideFavorites}</Text>
                         </View>
                         <Switch
-                            trackColor={{ false: '#3f3f46', true: '#c026d3' }}
+                            trackColor={{ false: '#3f3f46', true: colors.accent }}
                             thumbColor={'#fff'}
                             onValueChange={toggleHideFavorites}
                             value={hideFavorites}
@@ -189,18 +228,18 @@ export default function SettingsScreen() {
                 </View>
 
                 {/* SENSACIONES SECTION */}
-                <Text style={styles.sectionHeader}>SENSACIONES</Text>
-                <View style={styles.sectionContainer}>
+                <Text style={styles.sectionHeader}>{t.sensations}</Text>
+                <View style={[styles.sectionContainer, { backgroundColor: colors.card }]}>
 
                     <View style={styles.row}>
                         <View style={styles.iconContainer}>
-                            <Ionicons name="phone-portrait-outline" size={22} color="#9ca3af" />
+                            <Ionicons name="phone-portrait-outline" size={22} color={colors.icon} />
                         </View>
                         <View style={styles.rowTextContent}>
-                            <Text style={styles.rowTitle}>Vibración</Text>
+                            <Text style={[styles.rowTitle, { color: colors.text }]}>{t.vibration}</Text>
                         </View>
                         <Switch
-                            trackColor={{ false: '#3f3f46', true: '#c026d3' }}
+                            trackColor={{ false: '#3f3f46', true: colors.accent }}
                             thumbColor={'#fff'}
                             onValueChange={async (val) => {
                                 setVibration(val);
@@ -210,17 +249,17 @@ export default function SettingsScreen() {
                         />
                     </View>
 
-                    <View style={styles.separator} />
+                    <View style={[styles.separator, { backgroundColor: colors.separator }]} />
 
                     <View style={styles.row}>
                         <View style={styles.iconContainer}>
-                            <Ionicons name="volume-medium-outline" size={22} color="#9ca3af" />
+                            <Ionicons name="volume-medium-outline" size={22} color={colors.icon} />
                         </View>
                         <View style={styles.rowTextContent}>
-                            <Text style={styles.rowTitle}>Sonidos</Text>
+                            <Text style={[styles.rowTitle, { color: colors.text }]}>{t.sounds}</Text>
                         </View>
                         <Switch
-                            trackColor={{ false: '#3f3f46', true: '#c026d3' }}
+                            trackColor={{ false: '#3f3f46', true: colors.accent }}
                             thumbColor={'#fff'}
                             onValueChange={async (val) => {
                                 setSounds(val);
@@ -232,8 +271,8 @@ export default function SettingsScreen() {
                 </View>
 
                 {/* OTROS SECTION */}
-                <Text style={styles.sectionHeader}>OTROS</Text>
-                <View style={styles.sectionContainer}>
+                <Text style={styles.sectionHeader}>{t.others}</Text>
+                <View style={[styles.sectionContainer, { backgroundColor: colors.card }]}>
 
                     <TouchableOpacity
                         style={styles.row}
@@ -244,48 +283,73 @@ export default function SettingsScreen() {
                         }}
                     >
                         <View style={styles.iconContainer}>
-                            <Ionicons name="play-circle-outline" size={22} color="#9ca3af" />
+                            <Ionicons name="play-circle-outline" size={22} color={colors.icon} />
                         </View>
                         <View style={styles.rowTextContent}>
-                            <Text style={styles.rowTitle}>Ver Tutorial</Text>
+                            <Text style={[styles.rowTitle, { color: colors.text }]}>{t.viewTutorial}</Text>
                         </View>
-                        <Ionicons name="chevron-forward" size={20} color="#6b7280" />
+                        <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
                     </TouchableOpacity>
 
-                    <View style={styles.separator} />
+                    <View style={[styles.separator, { backgroundColor: colors.separator }]} />
 
-                    <TouchableOpacity style={styles.row} activeOpacity={0.7}>
+                    <TouchableOpacity
+                        style={styles.row}
+                        activeOpacity={0.7}
+                        onPress={async () => {
+                            await AsyncStorage.removeItem('onboarding_completed');
+                            router.replace('/onboarding');
+                        }}
+                    >
                         <View style={styles.iconContainer}>
-                            <Ionicons name="document-text-outline" size={22} color="#9ca3af" />
+                            <Ionicons name="rocket-outline" size={22} color={colors.icon} />
                         </View>
                         <View style={styles.rowTextContent}>
-                            <Text style={styles.rowTitle}>Política de Privacidad</Text>
+                            <Text style={[styles.rowTitle, { color: colors.text }]}>Ver Intro</Text>
                         </View>
-                        <Ionicons name="chevron-forward" size={20} color="#6b7280" />
+                        <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+                    </TouchableOpacity>
+
+                    <View style={[styles.separator, { backgroundColor: colors.separator }]} />
+
+                    <TouchableOpacity
+                        style={styles.row}
+                        activeOpacity={0.7}
+                        onPress={() => {
+                            Linking.openURL('https://delete-it-app.netlify.app/');
+                        }}
+                    >
+                        <View style={styles.iconContainer}>
+                            <Ionicons name="document-text-outline" size={22} color={colors.icon} />
+                        </View>
+                        <View style={styles.rowTextContent}>
+                            <Text style={[styles.rowTitle, { color: colors.text }]}>{t.privacyPolicy}</Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
                     </TouchableOpacity>
                 </View>
 
                 {/* APP INFO SECTION */}
-                <Text style={styles.sectionHeader}>APP INFO</Text>
-                <View style={styles.sectionContainer}>
+                <Text style={styles.sectionHeader}>{t.appInfo}</Text>
+                <View style={[styles.sectionContainer, { backgroundColor: colors.card }]}>
                     <View style={styles.row}>
                         <View style={styles.iconContainer}>
-                            <Ionicons name="information-circle-outline" size={22} color="#9ca3af" />
+                            <Ionicons name="information-circle-outline" size={22} color={colors.icon} />
                         </View>
                         <View style={styles.rowTextContent}>
-                            <Text style={styles.rowTitle}>Versión</Text>
+                            <Text style={[styles.rowTitle, { color: colors.text }]}>{t.version}</Text>
                         </View>
-                        <Text style={styles.valueText}>1.0.0</Text>
+                        <Text style={styles.valueText}>0.9.1</Text>
                     </View>
 
-                    <View style={styles.separator} />
+                    <View style={[styles.separator, { backgroundColor: colors.separator }]} />
 
                     <View style={styles.row}>
                         <View style={styles.iconContainer}>
-                            <Ionicons name="person-outline" size={22} color="#9ca3af" />
+                            <Ionicons name="person-outline" size={22} color={colors.icon} />
                         </View>
                         <View style={styles.rowTextContent}>
-                            <Text style={styles.rowTitle}>Creado por</Text>
+                            <Text style={[styles.rowTitle, { color: colors.text }]}>{t.createdBy}</Text>
                         </View>
                         <Text style={styles.valueText}>Jim Bryan</Text>
                     </View>
@@ -298,11 +362,11 @@ export default function SettingsScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#110F18', // Matching app background
-        paddingTop: 60, // Space for header/top
+        backgroundColor: colors.background,
+        paddingTop: 60,
     },
     centered: {
         justifyContent: 'center',
@@ -311,7 +375,7 @@ const styles = StyleSheet.create({
     screenTitle: {
         fontSize: 24,
         fontWeight: 'bold',
-        color: '#fff',
+        color: colors.text,
         textAlign: 'center',
         marginBottom: 30,
     },
@@ -323,7 +387,7 @@ const styles = StyleSheet.create({
         paddingBottom: 40,
     },
     sectionHeader: {
-        color: '#9ca3af',
+        color: colors.textSecondary,
         fontSize: 13,
         fontWeight: '600',
         marginBottom: 8,
@@ -333,11 +397,13 @@ const styles = StyleSheet.create({
         letterSpacing: 0.5,
     },
     sectionContainer: {
-        backgroundColor: '#1C1C2E',
+        backgroundColor: colors.card,
         borderRadius: 16,
         overflow: 'hidden',
         paddingVertical: 4,
         marginBottom: 24,
+        borderWidth: 1,
+        borderColor: colors.cardBorder,
     },
     row: {
         flexDirection: 'row',
@@ -358,30 +424,30 @@ const styles = StyleSheet.create({
     },
     rowTitle: {
         fontSize: 16,
-        color: '#fff',
+        color: colors.text,
         fontWeight: '400',
     },
     rowSubtitle: {
         fontSize: 12,
-        color: '#6b7280',
+        color: colors.textSecondary,
         marginTop: 2,
         maxWidth: '90%',
     },
     separator: {
         height: 1,
-        backgroundColor: '#2D2D44',
-        marginLeft: 48, // Indent separator to match text start
+        backgroundColor: colors.separator,
+        marginLeft: 48,
     },
     helperText: {
-        color: '#6b7280',
+        color: colors.textSecondary,
         fontSize: 12,
         marginLeft: 16,
         marginRight: 16,
         marginBottom: 24,
-        marginTop: -16, // Pull closer to the section above
+        marginTop: -16,
     },
     valueText: {
         fontSize: 16,
-        color: '#6b7280',
+        color: colors.textSecondary,
     }
 });
