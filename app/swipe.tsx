@@ -11,6 +11,7 @@ import { ActivityIndicator, Alert, Modal, StyleSheet, Text, TouchableOpacity, Vi
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CompletionView from '../components/SwipeDeck/CompletionView';
 import { SwipeDeck, SwipeDeckRef } from '../components/SwipeDeck/Deck';
+import { FullscreenZoom } from '../components/SwipeDeck/FullscreenZoom';
 import { ThemeColors } from '../constants/Colors';
 import { translations } from '../constants/Translations';
 import { useFeedback } from '../hooks/useFeedback';
@@ -42,7 +43,7 @@ export default function SwipeScreen() {
     const { photos, loading, error, loadMore, hasNextPage } = usePhotos(photoParams);
 
     const deckRef = useRef<SwipeDeckRef>(null);
-    const [isZoomMode, setIsZoomMode] = useState(false);
+    const [isZoomModalVisible, setIsZoomModalVisible] = useState(false);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [isFinished, setIsFinished] = useState(false);
 
@@ -436,10 +437,7 @@ export default function SwipeScreen() {
                 <View style={[styles.progressBarFill, { width: `${progress}%` }]} />
             </View>
 
-            {/* Overlay to dim background */}
-            {isZoomMode && <View style={styles.overlay} pointerEvents="none" />}
-
-            <View style={[styles.content, isZoomMode && { zIndex: 20 }]} pointerEvents="box-none">
+            <View style={[styles.content]} pointerEvents="box-none">
                 {photos.length > 0 ? (
                     <SwipeDeck
                         ref={deckRef}
@@ -447,7 +445,7 @@ export default function SwipeScreen() {
                         onSwipeLeft={handleSwipeLeft}
                         onSwipeRight={handleSwipeRight}
                         onEmpty={() => setIsFinished(true)}
-                        isZoomMode={isZoomMode}
+                        isZoomMode={false}
                         language={language}
                     />
                 ) : (
@@ -492,13 +490,20 @@ export default function SwipeScreen() {
 
             <View style={styles.zoomButtonWrapper}>
                 <TouchableOpacity
-                    style={[styles.controlButton, styles.secondaryButton, isZoomMode && styles.zoomButtonActive]}
-                    onPress={() => setIsZoomMode(!isZoomMode)}
+                    style={[styles.controlButton, styles.secondaryButton]}
+                    onPress={() => setIsZoomModalVisible(true)}
                     activeOpacity={0.8}
                 >
-                    <Ionicons name="search" size={24} color={isZoomMode ? colors.accent : colors.text} />
+                    <Ionicons name="search" size={24} color={colors.text} />
                 </TouchableOpacity>
             </View>
+
+            {/* Custom Fullscreen Zoom Modal */}
+            <FullscreenZoom
+                isVisible={isZoomModalVisible}
+                asset={photos[currentIndex]}
+                onClose={() => setIsZoomModalVisible(false)}
+            />
 
             {isFinished && (
                 <CompletionView

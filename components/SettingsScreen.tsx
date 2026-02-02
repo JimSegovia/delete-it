@@ -305,7 +305,7 @@ export default function SettingsScreen({ language, onLanguageChange }: SettingsS
                             <Ionicons name="rocket-outline" size={22} color={colors.icon} />
                         </View>
                         <View style={styles.rowTextContent}>
-                            <Text style={[styles.rowTitle, { color: colors.text }]}>Ver Intro</Text>
+                            <Text style={[styles.rowTitle, { color: colors.text }]}>{t.viewIntro}</Text>
                         </View>
                         <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
                     </TouchableOpacity>
@@ -339,20 +339,10 @@ export default function SettingsScreen({ language, onLanguageChange }: SettingsS
                         <View style={styles.rowTextContent}>
                             <Text style={[styles.rowTitle, { color: colors.text }]}>{t.version}</Text>
                         </View>
-                        <Text style={styles.valueText}>0.9.1</Text>
+                        <Text style={styles.valueText}>0.9.3</Text>
                     </View>
 
-                    <View style={[styles.separator, { backgroundColor: colors.separator }]} />
 
-                    <View style={styles.row}>
-                        <View style={styles.iconContainer}>
-                            <Ionicons name="person-outline" size={22} color={colors.icon} />
-                        </View>
-                        <View style={styles.rowTextContent}>
-                            <Text style={[styles.rowTitle, { color: colors.text }]}>{t.createdBy}</Text>
-                        </View>
-                        <Text style={styles.valueText}>Jim Bryan</Text>
-                    </View>
                 </View>
 
 

@@ -3,7 +3,7 @@ import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
-import { Dimensions, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Image as RNImage, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Extrapolation,
@@ -48,9 +48,39 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
     ({ asset, onSwipeLeft, onSwipeRight, isTop, isZoomMode, startFromLeft, autoSwipe, initialTranslateX, initialVelocity, language }, ref) => {
         // Swipe State
         const translateX = useSharedValue(initialTranslateX ?? (startFromLeft ? -SCREEN_WIDTH * 1.5 : 0));
-        const translateY = useSharedValue(0);
-        const colors = useThemeColor();
-        const styles = React.useMemo(() => createStyles(colors), [colors]);
+        // Determine Render Type EARLY
+        const renderType = useMemo(() => {
+            if (asset.mediaType === 'video') return 'video';
+            if (asset.mediaType === 'unknown' || (asset.uri && /\.(pdf|doc|docx|xls|xlsx)$/i.test(asset.uri))) return 'file';
+            return 'image';
+        }, [asset]);
+
+        // Smart Resize State
+        const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(
+            asset.width && asset.height ? { width: asset.width, height: asset.height } : null
+        );
+
+        // Fetch dimensions if missing (e.g. from Folder)
+        useEffect(() => {
+            if (!imageDimensions && asset.uri && renderType === 'image') {
+                RNImage.getSize(asset.uri, (w: number, h: number) => {
+                    setImageDimensions({ width: w, height: h });
+                }, (err: any) => {
+                    // Fallback or ignore
+                    console.log("Failed to get image size", err);
+                });
+            }
+        }, [asset, imageDimensions, renderType]);
+
+        // Determine Content Fit based on aspect ratio
+        const contentFit = useMemo(() => {
+            if (!imageDimensions) return 'cover'; // Default
+            const { width, height } = imageDimensions;
+            // Landscape -> Contain
+            if (width > height) return 'contain';
+            // Portrait -> Cover
+            return 'cover';
+        }, [imageDimensions]);
 
         // Zoom State
         const scale = useSharedValue(1);
@@ -61,21 +91,15 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
         const zoomTranslateY = useSharedValue(0);
         const savedZoomTx = useSharedValue(0);
         const savedZoomTy = useSharedValue(0);
+        const translateY = useSharedValue(0);
+        const colors = useThemeColor();
+        const styles = React.useMemo(() => createStyles(colors), [colors]);
 
         // State to track if we are currently animating in from an undo
         const isRestoring = useSharedValue(!!startFromLeft);
 
         // Track zoom state for gesture enabling without reading shared value in render
         const [fileInfo, setFileInfo] = useState<{ size: string; date: string } | null>(null);
-
-        // Determine Render Type
-        const renderType = useMemo(() => {
-            if (asset.mediaType === 'video') return 'video';
-            if (asset.mediaType === 'unknown' || (asset.uri && /\.(pdf|doc|docx|xls|xlsx)$/i.test(asset.uri))) return 'file';
-            return 'image';
-        }, [asset]);
-
-
 
         // Video Player Setup (expo-video)
         // Note: useVideoPlayer is stable
@@ -339,7 +363,7 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
             .onEnd(() => {
                 savedZoomTx.value = zoomTranslateX.value;
                 savedZoomTy.value = zoomTranslateY.value;
-            }), [isTop, isZoomMode, scale, zoomTranslateX, zoomTranslateY, savedZoomTx, savedZoomTy]);
+            }), [isTop, isZoomMode, zoomTranslateX, zoomTranslateY, savedZoomTx, savedZoomTy]);
 
         // Combine gestures
         const composedGesture = useMemo(() => {
@@ -438,7 +462,7 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
                         <Image
                             source={{ uri: asset.uri }}
                             style={styles.image}
-                            contentFit="cover"
+                            contentFit={contentFit}
                             cachePolicy="disk"
                         />
                     )}

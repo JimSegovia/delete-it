@@ -12,6 +12,8 @@ export interface PhotoAsset extends Partial<MediaLibrary.Asset> {
     fileSize?: number;
     mediaType?: MediaLibrary.MediaTypeValue;
     creationTime?: number;
+    width?: number;
+    height?: number;
 }
 
 export interface UsePhotosParams {
@@ -105,9 +107,11 @@ export function usePhotos(params: UsePhotosParams = {}) {
                                 modificationTime: info.exists ? (info.modificationTime || 0) : 0,
                                 fileSize: info.exists ? info.size : 0,
                                 mediaType: mediaType,
+                                width: 0,
+                                height: 0,
                             };
                         } catch {
-                            return { uri, id: uri, modificationTime: 0, fileSize: 0, mediaType: 'photo' as MediaLibrary.MediaTypeValue };
+                            return { uri, id: uri, modificationTime: 0, fileSize: 0, mediaType: 'photo' as MediaLibrary.MediaTypeValue, width: 0, height: 0 };
                         }
                     })
                 );

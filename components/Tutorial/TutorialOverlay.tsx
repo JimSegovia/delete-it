@@ -52,7 +52,7 @@ export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
         } else {
             opacity.value = withTiming(0, { duration: 300 });
         }
-    }, [isVisible]);
+    }, [isVisible, opacity]);
 
     useEffect(() => {
         if (isVisible && currentStep) {
@@ -86,7 +86,7 @@ export const TutorialOverlay: React.FC<TutorialOverlayProps> = ({
             spotlightHeight.value = withSpring(targetH);
             spotlightRadius.value = withSpring(targetR);
         }
-    }, [currentStep, isVisible]);
+    }, [currentStep, isVisible, spotlightHeight, spotlightRadius, spotlightWidth, spotlightX, spotlightY]);
 
     const overlayStyle = useAnimatedStyle(() => {
         return {

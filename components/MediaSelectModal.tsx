@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import * as MediaLibrary from 'expo-media-library';
+import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useState } from 'react';
 import { BackHandler, Dimensions, FlatList, Image, Modal, PanResponder, Pressable, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
@@ -235,7 +235,10 @@ export default function MediaSelectModal({
             onRequestClose={onClose}
         >
             <View style={styles.container}>
-                <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+                {isVisible && <StatusBar style="light" translucent />}
+                {/* Use a simple dark view if BlurView is problematic, or keep it. User said "dim oscuro del fondo". The styles.container has rgba(0,0,0,0.85). */}
+                {/* Ensure this View fills screen including behind status bar. */}
+
                 <SafeAreaView style={styles.safeArea}>
 
                     {/* Header */}

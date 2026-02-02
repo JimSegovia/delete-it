@@ -603,7 +603,7 @@ export default function Home() {
       <View style={{ flex: 1 }}>
         <View style={{ flex: 1, justifyContent: 'center' }}>
           <Text style={styles.modalTitle}>{t.source.chooseSource}</Text>
-          <Text style={styles.modalSubtitle}>{t.source.chooseSource}</Text>
+          <Text style={styles.modalSubtitle}>{t.source.chooseSourceDesc}</Text>
 
           <View style={styles.sourceGrid}>
             {/* Option 1: Gallery (Albums) */}
@@ -760,7 +760,7 @@ export default function Home() {
           <View style={styles.statsContainer}>
             {/* Total Freed Card */}
             <View style={styles.statCard} ref={totalCardRef} collapsable={false}>
-              <Text style={styles.statLabel}>{t.stats.photos}</Text>
+              <Text style={styles.statLabel}>{t.stats.cleared}</Text>
               <View style={styles.statRow}>
                 <Text style={styles.statValue}>{formatBytes(stats.totalFreedBytes)}</Text>
               </View>
