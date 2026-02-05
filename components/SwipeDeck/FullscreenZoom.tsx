@@ -46,7 +46,6 @@ export const FullscreenZoom: React.FC<FullscreenZoomProps> = ({ isVisible, asset
     const player = useVideoPlayer(asset?.uri ?? '', (player) => {
         player.loop = true;
         player.muted = false;
-        // logic handled in effect
     });
 
     useEffect(() => {
@@ -58,8 +57,11 @@ export const FullscreenZoom: React.FC<FullscreenZoomProps> = ({ isVisible, asset
     }, [isVisible, asset, player]);
 
 
-    // Gestures
+    // --- GESTURES ---
+
+    // 1. ZOOM GESTURES (Images Only)
     const pinchGesture = Gesture.Pinch()
+        .enabled(asset?.mediaType !== 'video')
         .onStart(() => {
             savedScale.value = scale.value;
         })
@@ -77,6 +79,7 @@ export const FullscreenZoom: React.FC<FullscreenZoomProps> = ({ isVisible, asset
         });
 
     const panGesture = Gesture.Pan()
+        .enabled(asset?.mediaType !== 'video')
         .averageTouches(true)
         .onStart(() => {
             savedTx.value = translateX.value;
@@ -103,6 +106,8 @@ export const FullscreenZoom: React.FC<FullscreenZoomProps> = ({ isVisible, asset
 
     if (!asset) return null;
 
+    const isVideo = asset.mediaType === 'video';
+
     return (
         <Modal
             visible={isVisible}
@@ -114,39 +119,58 @@ export const FullscreenZoom: React.FC<FullscreenZoomProps> = ({ isVisible, asset
         >
             <GestureHandlerRootView style={{ flex: 1 }}>
                 <View style={styles.container}>
-                    {/* Explicit Status Bar to ensure transparency/dimming works visually if needed, though Modal handles it */}
                     {isVisible && <StatusBar style="light" translucent />}
 
-                    <GestureDetector gesture={composedGesture}>
-                        <Animated.View style={[styles.content, animatedStyle]}>
-                            {asset.mediaType === 'video' ? (
+                    {isVideo ? (
+                        // VIDEO LAYOUT: Split view (Video Top + Bottom Bar)
+                        <View style={{ flex: 1, width: '100%' }}>
+                            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'black' }}>
                                 <VideoView
                                     player={player}
-                                    style={styles.image}
+                                    style={{ width: '100%', height: '100%' }}
                                     contentFit="contain"
-                                    nativeControls={false}
+                                    nativeControls={true}
+                                    allowsFullscreen={true}
+                                    allowsPictureInPicture={true}
                                 />
-                            ) : (
-                                <Image
-                                    source={{ uri: asset.uri }}
-                                    style={styles.image}
-                                    contentFit="contain"
-                                    cachePolicy="disk"
-                                />
-                            )}
-                        </Animated.View>
-                    </GestureDetector>
+                            </View>
+                            {/* Dedicate Bottom Bar for Close Button for stability and overlap prevention */}
+                            <View style={[styles.bottomBar, { backgroundColor: 'black' }]}>
+                                <TouchableOpacity
+                                    style={[styles.controlButton, styles.secondaryButton, styles.zoomButtonActive]}
+                                    onPress={onClose}
+                                    activeOpacity={0.8}
+                                >
+                                    <Ionicons name="close" size={24} color={colors.accent} />
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    ) : (
+                        // IMAGE LAYOUT: Fullscreen immersive with floating button
+                        <>
+                            <GestureDetector gesture={composedGesture}>
+                                <Animated.View style={[styles.content, animatedStyle]}>
+                                    <Image
+                                        source={{ uri: asset.uri }}
+                                        style={styles.image}
+                                        contentFit="contain"
+                                        cachePolicy="disk"
+                                    />
+                                </Animated.View>
+                            </GestureDetector>
 
-                    {/* Floating Lupa Button (Toggle Off) */}
-                    <View style={styles.zoomButtonWrapper}>
-                        <TouchableOpacity
-                            style={[styles.controlButton, styles.secondaryButton, styles.zoomButtonActive]}
-                            onPress={onClose}
-                            activeOpacity={0.8}
-                        >
-                            <Ionicons name="search" size={24} color={colors.accent} />
-                        </TouchableOpacity>
-                    </View>
+                            {/* Floating Close Button for Images */}
+                            <View style={styles.zoomButtonWrapper}>
+                                <TouchableOpacity
+                                    style={[styles.controlButton, styles.secondaryButton, styles.zoomButtonActive]}
+                                    onPress={onClose}
+                                    activeOpacity={0.8}
+                                >
+                                    <Ionicons name="close" size={24} color={colors.accent} />
+                                </TouchableOpacity>
+                            </View>
+                        </>
+                    )}
                 </View>
             </GestureHandlerRootView>
         </Modal>
@@ -156,7 +180,7 @@ export const FullscreenZoom: React.FC<FullscreenZoomProps> = ({ isVisible, asset
 const createStyles = (colors: ThemeColors) => StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: 'black', // Full black background as requested
+        backgroundColor: 'black',
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -170,15 +194,23 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
         width: '100%',
         height: '100%',
     },
+    // For Images: Floating Button
     zoomButtonWrapper: {
         position: 'absolute',
-        // If swipe.tsx uses SafeAreaView, its 'bottom: 37' starts from the safe area edge.
-        // So we must add bottomInset here to match.
         bottom: 37,
         left: '50%',
         marginLeft: 10,
         zIndex: 20,
         elevation: 20,
+    },
+    // For Videos: Bottom Bar
+    bottomBar: {
+        width: '100%',
+        paddingVertical: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        // Optional: Ensure it sits above navigation bar if needed, 
+        // usually paddingVertical handles visual spacing nicely.
     },
     controlButton: {
         width: 60,
@@ -195,6 +227,5 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     zoomButtonActive: {
         borderColor: colors.accent,
         borderWidth: 2,
-        // zIndex: 10000, // Handled by wrapper zIndex
     },
 });

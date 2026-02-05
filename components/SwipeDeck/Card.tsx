@@ -24,7 +24,8 @@ import { FilePreview } from './FilePreview';
 
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
+const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.18;
+const VELOCITY_THRESHOLD = 800;
 
 export interface SwipeCardRef {
     swipeLeft: () => void;
@@ -191,26 +192,44 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
                 // So momentarily set to left then spring to 0?
                 // Actually initial state hook handled the initial value.
                 // We just need to animate to 0.
-                translateX.value = -SCREEN_WIDTH * 1.5; // Force start pos
-                translateX.value = withSpring(0, {}, (finished) => {
+                translateX.value = -SCREEN_WIDTH * 1.6; // Force start pos
+                translateX.value = withSpring(0, { damping: 20, stiffness: 220 }, (finished) => {
                     if (finished) {
                         isRestoring.value = false;
                     }
                 });
             } else if (autoSwipe === 'left') {
-                translateX.value = withSpring(-SCREEN_WIDTH * 1.5, { velocity: initialVelocity }, (finished) => {
+                translateX.value = withSpring(-SCREEN_WIDTH * 1.6, {
+                    velocity: Math.abs(initialVelocity ?? 0) > 1000 ? initialVelocity : -2000,
+                    damping: 20,
+                    stiffness: 250,
+                    mass: 0.8
+                }, (finished) => {
                     if (finished) {
                         runOnJS(onSwipeLeft)(asset);
                     }
                 });
             } else if (autoSwipe === 'right') {
-                translateX.value = withSpring(SCREEN_WIDTH * 1.5, { velocity: initialVelocity }, (finished) => {
+                translateX.value = withSpring(SCREEN_WIDTH * 1.6, {
+                    velocity: Math.abs(initialVelocity ?? 0) > 1000 ? initialVelocity : 2000,
+                    damping: 20,
+                    stiffness: 250,
+                    mass: 0.8
+                }, (finished) => {
                     if (finished) {
                         runOnJS(onSwipeRight)(asset);
                     }
                 });
             }
         }, [startFromLeft, translateX, translateY, isRestoring, autoSwipe, initialVelocity, onSwipeLeft, onSwipeRight, asset]);
+
+        // Thumbnail State for Video Swap
+        const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
+        // Shared value to control thumbnail visibility (0 = hidden, 1 = visible)
+        const showThumbnail = useSharedValue(0);
+
+        // Generate Thumbnail logic
+        // Thumbnail extraction removed to maintain video continuity (TextureView handles clipping)
 
         // Reset zoom when mode is disabled
         useEffect(() => {
@@ -298,6 +317,10 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
             .onStart(() => {
                 if (renderType === 'video') {
                     runOnJS(pauseVideo)();
+                    // SHOW THUMBNAIL ON START
+                    if (thumbnailUri) {
+                        showThumbnail.value = 1;
+                    }
                 }
             })
             .onUpdate((event) => {
@@ -305,18 +328,21 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
                 translateY.value = event.translationY;
             })
             .onEnd((event) => {
-                if (Math.abs(event.translationX) > SWIPE_THRESHOLD) {
-                    if (event.translationX > 0) {
+                const shouldSwipe = Math.abs(event.translationX) > SWIPE_THRESHOLD || Math.abs(event.velocityX) > VELOCITY_THRESHOLD;
+
+                if (shouldSwipe) {
+                    if (event.translationX > 0 || event.velocityX > VELOCITY_THRESHOLD) {
                         swipeRight(event.velocityX, event.translationX);
                     } else {
                         swipeLeft(event.velocityX, event.translationX);
                     }
                 } else {
-                    translateX.value = withSpring(0);
-                    translateY.value = withSpring(0);
+                    translateX.value = withSpring(0, { damping: 20, stiffness: 200 });
+                    translateY.value = withSpring(0, { damping: 20, stiffness: 200 });
                     // Resume video if swipe cancelled
                     if (renderType === 'video') {
                         runOnJS(playVideo)();
+                        showThumbnail.value = 0; // HIDE THUMBNAIL
                     }
                 }
             }), [isTop, isZoomMode, translateX, translateY, swipeLeft, swipeRight, renderType, pauseVideo, playVideo]);
@@ -419,6 +445,33 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
             };
         });
 
+        const thumbnailStyle = useAnimatedStyle(() => {
+            return {
+                ...StyleSheet.absoluteFillObject,
+                opacity: showThumbnail.value,
+                zIndex: showThumbnail.value > 0 ? 10 : -1,
+            };
+        });
+
+        const videoContainerStyle = useAnimatedStyle(() => {
+            return {
+                opacity: 1, // Video always visible with TextureView
+            };
+        });
+
+        const fallbackStyle = useAnimatedStyle(() => {
+            // Show fallback if we are dragging BUT don't have a thumbnail
+            const isDragging = Math.abs(translateX.value) > 2;
+            return {
+                opacity: (showThumbnail.value === 0 && isDragging) ? 1 : 0,
+                zIndex: (showThumbnail.value === 0 && isDragging) ? 5 : -1,
+                ...StyleSheet.absoluteFillObject,
+                backgroundColor: '#333', // Dark gray fallback
+                alignItems: 'center',
+                justifyContent: 'center',
+            };
+        });
+
         const overlayStyle = useAnimatedStyle(() => {
             const opacityRight = interpolate(
                 translateX.value,
@@ -457,42 +510,48 @@ const SwipeCardComponent = React.forwardRef<SwipeCardRef, SwipeCardProps>(
 
         return (
             <GestureDetector gesture={composedGesture}>
-                <Animated.View style={[styles.card, animatedStyle]}>
-                    {renderType === 'image' && (
-                        <Image
-                            source={{ uri: asset.uri }}
-                            style={styles.image}
-                            contentFit={contentFit}
-                            cachePolicy="disk"
-                        />
-                    )}
+                <Animated.View style={[styles.cardContainer, animatedStyle]}>
+                    <View style={styles.cardInner}>
+                        {renderType === 'image' && (
+                            <Image
+                                source={{ uri: asset.uri }}
+                                style={styles.image}
+                                contentFit={contentFit}
+                                cachePolicy="disk"
+                            />
+                        )}
 
-                    {renderType === 'video' && player && (
-                        <VideoView
-                            player={player}
-                            style={[styles.image, { borderRadius: 20 }]} // Explicit border radius for Android clipping
-                            contentFit="cover"
-                            nativeControls={false}
-                        />
-                    )}
+                        {renderType === 'video' && player && (
+                            <Animated.View style={[styles.image, videoContainerStyle]}>
+                                <VideoView
+                                    player={player}
+                                    style={[styles.image]} // TextureView respects parent clipping
+                                    contentFit={contentFit}
+                                    nativeControls={false}
+                                    surfaceType="textureView"
+                                />
+                            </Animated.View>
+                        )}
 
-                    {renderType === 'file' && (
-                        <FilePreview
-                            uri={asset.uri}
-                            extension={asset.uri.split('.').pop() || ''}
-                            colors={colors}
-                        />
-                    )}
-                    {fileInfo && (
-                        <View style={styles.infoOverlay}>
-                            <View style={styles.infoContainer}>
-                                <Text style={styles.infoText}>
-                                    {fileInfo.size} • {fileInfo.date}
-                                </Text>
+                        {renderType === 'file' && (
+                            <FilePreview
+                                uri={asset.uri}
+                                extension={asset.uri.split('.').pop() || ''}
+                                colors={colors}
+                            />
+                        )}
+                        {fileInfo && (
+                            <View style={styles.infoOverlay}>
+                                <View style={styles.infoContainer}>
+                                    <Text style={styles.infoText}>
+                                        {fileInfo.size} • {fileInfo.date}
+                                    </Text>
+                                </View>
                             </View>
-                        </View>
-                    )}
-                    <Animated.View style={[StyleSheet.absoluteFill, overlayStyle]} pointerEvents="none" />
+                        )}
+
+                        <Animated.View style={[StyleSheet.absoluteFill, overlayStyle]} pointerEvents="none" />
+                    </View>
                 </Animated.View>
             </GestureDetector>
         );
@@ -504,18 +563,23 @@ SwipeCardComponent.displayName = 'SwipeCard';
 export const SwipeCard = React.memo(SwipeCardComponent);
 
 const createStyles = (colors: ThemeColors) => StyleSheet.create({
-    card: {
+    cardContainer: {
         position: 'absolute',
         width: '100%',
         height: '100%',
         borderRadius: 20,
         backgroundColor: colors.card,
-        overflow: 'hidden',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.25,
         shadowRadius: 3.84,
         elevation: 5,
+    },
+    cardInner: {
+        flex: 1,
+        borderRadius: 20,
+        backgroundColor: colors.card,
+        overflow: 'hidden',
         borderWidth: 1,
         borderColor: colors.cardBorder,
     },
